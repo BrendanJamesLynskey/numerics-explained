@@ -4,7 +4,9 @@ An animated explainer of number formats, rounding and quantisation for
 machine learning: how a floating-point code becomes a value, round to
 nearest against stochastic rounding, why long sums go wrong in low
 precision, the formats zoo (FP8 E4M3 and E5M2, BF16 and FP16, the MX block
-formats), and integer quantisation. Every chapter is built around an
+formats), integer quantisation, activation outliers (LLM.int8() and
+SmoothQuant), GPTQ, AWQ and NF4, KV-cache quantisation measured on a live
+tiny transformer, and what the bits buy in hardware. Every chapter is built around an
 animation, and every frame of every animation is computed by a small
 **numerics library** that reproduces numpy and ml_dtypes bit for bit and
 whose TypeScript port matches its Python reference exactly.
@@ -21,7 +23,7 @@ Silicon"; the last is coming).
 
 **Live:** [numerics-explained.vercel.app](https://numerics-explained.vercel.app/)
 
-![An MX block: 32 values sharing one power-of-two scale, each stored in FP4](docs/screenshots/07-mx.png)
+![GPTQ quantising a layer one column at a time, pushing each column's error into the columns still to come](docs/media/gptq.gif)
 
 ## Part of
 
@@ -40,30 +42,48 @@ series.
 
 ## Chapters
 
-| #   | Chapter                                                                                   | The animation                                                                                                                                                 |
-| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 01  | [Bits to numbers](https://numerics-explained.vercel.app/learn/01-bits-to-numbers)         | Click the bits of a code (eight formats) and watch the value; the number line zooms towards zero and every representable value crowds in.                     |
-| 02  | [Rounding](https://numerics-explained.vercel.app/learn/02-rounding)                       | Inputs rounded to nearest-even and stochastically, error histograms building up; a running sum that nearest-even can never move.                              |
-| 03  | [Accumulation error](https://numerics-explained.vercel.app/learn/03-accumulation)         | 8,192 numbers summed naively in FP16 (it stalls at 2,048) and BF16, in FP32, with Kahan's compensation and pairwise; running totals and errors.               |
-| 04  | [The formats zoo](https://numerics-explained.vercel.app/learn/04-formats-zoo)             | A probe value swept across six formats' ranges (underflow, subnormals, overflow, saturation); an MX block converted element by element with its shared scale. |
-| 05  | [Quantisation basics](https://numerics-explained.vercel.app/learn/05-quantisation-basics) | A weight matrix on a heat map quantised per tensor, per channel and per group, with the error fading; absmax against zero-point on skewed activations.        |
+| #   | Chapter                                                                                   | The animation                                                                                                                                                      |
+| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 01  | [Bits to numbers](https://numerics-explained.vercel.app/learn/01-bits-to-numbers)         | Click the bits of a code (eight formats) and watch the value; the number line zooms towards zero and every representable value crowds in.                          |
+| 02  | [Rounding](https://numerics-explained.vercel.app/learn/02-rounding)                       | Inputs rounded to nearest-even and stochastically, error histograms building up; a running sum that nearest-even can never move.                                   |
+| 03  | [Accumulation error](https://numerics-explained.vercel.app/learn/03-accumulation)         | 8,192 numbers summed naively in FP16 (it stalls at 2,048) and BF16, in FP32, with Kahan's compensation and pairwise; running totals and errors.                    |
+| 04  | [The formats zoo](https://numerics-explained.vercel.app/learn/04-formats-zoo)             | A probe value swept across six formats' ranges (underflow, subnormals, overflow, saturation); an MX block converted element by element with its shared scale.      |
+| 05  | [Quantisation basics](https://numerics-explained.vercel.app/learn/05-quantisation-basics) | A weight matrix on a heat map quantised per tensor, per channel and per group, with the error fading; absmax against zero-point on skewed activations.             |
+| 06  | [The outlier problem](https://numerics-explained.vercel.app/learn/06-outliers)            | Two outlier channels wreck per-tensor and vector-wise INT8; LLM.int8() splits them off. SmoothQuant's α swept from 0 to 1, moving the difficulty into the weights. |
+| 07  | [GPTQ](https://numerics-explained.vercel.app/learn/07-gptq)                               | A layer quantised one column at a time, each column's error pushed into the columns still to come; output error against plain rounding.                            |
+| 08  | [AWQ and NF4](https://numerics-explained.vercel.app/learn/08-awq-and-nf4)                 | NF4's code book rebuilt from normal quantiles; AWQ's α search; the tiny transformer with its weights in ten formats, logit drift and agreement measured live.      |
+| 09  | [Quantising the KV cache](https://numerics-explained.vercel.app/learn/09-kv-cache)        | The tiny transformer's keys and values in FP8, INT8, FP4 with a scale per 16, INT4 and INT2, per token or per channel: memory against logit drift.                 |
+| 10  | [Quantisation in hardware](https://numerics-explained.vercel.app/learn/10-hardware)       | One dot product in FP32, FP16, INT8 and MXFP4, with the energy of each multiply-accumulate (Horowitz, 45 nm); the energy and area table.                           |
 
-Chapters 6 to 10 (outliers and SmoothQuant, GPTQ, AWQ and NF4, KV-cache
-quantisation, quantisation in hardware) are next; the library already
-implements GPTQ, AWQ-style scaling, SmoothQuant and NF4.
+## Animations
+
+Recorded frame by frame from the model's states by `pnpm animations`
+(GIF here; a WebM of each is next to it in [`docs/media/`](docs/media/)).
+
+|                                                                     |                                                                            |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| ![Zooming in on the number line](docs/media/bits-zoom.gif)          | ![Nearest-even against stochastic rounding](docs/media/rounding.gif)       |
+| ![Summing 8,192 numbers four ways](docs/media/accumulation.gif)     | ![An MX block converted element by element](docs/media/mx-block.gif)       |
+| ![Outlier channels and LLM.int8()](docs/media/outliers.gif)         | ![GPTQ column by column](docs/media/gptq.gif)                              |
+| ![Deriving NF4](docs/media/nf4.gif)                                 | ![The tiny transformer with a quantised KV cache](docs/media/kv-cache.gif) |
+| ![One dot product, four number systems](docs/media/dot-product.gif) |                                                                            |
 
 ## Screenshots
 
-|                                                                      |                                                                            |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| ![Landing](docs/screenshots/01-landing.png)                          | ![Bits to a value](docs/screenshots/02-bits.png)                           |
-| ![Nearest-even against stochastic](docs/screenshots/03-rounding.png) | ![Stagnation](docs/screenshots/04-stagnation.png)                          |
-| ![Summing four ways](docs/screenshots/05-accumulation.png)           | ![Range and precision](docs/screenshots/06-formats.png)                    |
-| ![An MX block](docs/screenshots/07-mx.png)                           | ![Per tensor, per channel, per group](docs/screenshots/08-granularity.png) |
-| ![Absmax against zero-point](docs/screenshots/09-zero-point.png)     | ![The formats table](docs/screenshots/10-formats-table.png)                |
+|                                                                         |                                                                            |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| ![Landing](docs/screenshots/01-landing.png)                             | ![Bits to a value](docs/screenshots/02-bits.png)                           |
+| ![Nearest-even against stochastic](docs/screenshots/03-rounding.png)    | ![Stagnation](docs/screenshots/04-stagnation.png)                          |
+| ![Summing four ways](docs/screenshots/05-accumulation.png)              | ![Range and precision](docs/screenshots/06-formats.png)                    |
+| ![An MX block](docs/screenshots/07-mx.png)                              | ![Per tensor, per channel, per group](docs/screenshots/08-granularity.png) |
+| ![Absmax against zero-point](docs/screenshots/09-zero-point.png)        | ![The formats table](docs/screenshots/10-formats-table.png)                |
+| ![Outliers](docs/screenshots/11-outliers.png)                           | ![SmoothQuant](docs/screenshots/12-smoothquant.png)                        |
+| ![GPTQ](docs/screenshots/13-gptq.png)                                   | ![NF4](docs/screenshots/14-nf4.png)                                        |
+| ![AWQ](docs/screenshots/15-awq.png)                                     | ![The tiny model, quantised weights](docs/screenshots/16-tiny-weights.png) |
+| ![The tiny model, quantised KV cache](docs/screenshots/17-kv-cache.png) | ![A dot product four ways](docs/screenshots/18-dot-product.png)            |
 
 Regenerate them with `pnpm build && pnpm start` in one shell and
-`pnpm screenshots` in another.
+`pnpm screenshots` (or `pnpm animations`) in another.
 
 ## The numerics library
 
@@ -91,8 +111,32 @@ operation. It implements:
   scaling** and **SmoothQuant** migration; the exponents α are multiples of
   1/8, computed as products of square roots, so Python and TypeScript agree
   bit for bit (a general `pow` does not).
+- **Chapters 6–10**: LLM.int8()'s mixed-precision decomposition (threshold 6) and vector-wise INT8, SmoothQuant's α sweep, GPTQ's column-by-column
+  states, NF4's derivation (the normal CDF as a power series, its inverse by
+  bisection), NF4 against INT4, and one dot product in FP32, FP16, INT8 and
+  MXFP4 with energy per operation from Horowitz's 45 nm table.
 - The state sequences the animations draw (`*_steps`); a frame is a pure
   function of one state.
+
+### The tiny transformer
+
+[`reference/tiny.py`](reference/tiny.py) and
+[`src/lib/num/tiny.ts`](src/lib/num/tiny.ts) quantise the
+[Transformer Decoder Explainer](https://github.com/BrendanJamesLynskey/transformer-explainer)'s
+model: its TypeScript is vendored byte for byte into `src/lib/transformer/`
+from commit `0049cf3` (MIT), and `tiny.py` is a plain-Python port of it. The
+hooks fake-quantise the six linear layers of each block (ten formats,
+GPTQ calibrated on four other prompts) or the keys and values (eight
+formats), and the measurements run four 32-character prompts teacher-forced:
+relative RMS logit drift, largest logit change, and how many of the 128
+top-1 predictions are unchanged. The weights are random; the explainer's
+N(0, 0.02) draws are rescaled (linears to 1/√fan-in, the embedding to
+N(0, 1)) so the blocks carry a trained model's share of the signal. A unit
+test proves the hooked forward pass equals the explainer's `forwardTyped`
+exactly; Python and TypeScript share exp, log, sin, cos and tanh, so the
+fixtures match to a relative 1e-12 (exactly for top tokens and agreement
+counts). In the browser the runs are computed in pieces, one forward pass
+per task, so the page stays responsive.
 
 ### Checked
 
@@ -108,6 +152,12 @@ operation. It implements:
   the three summations (against numpy's own `float16`/`float32` and
   ml_dtypes' `bfloat16` arithmetic) and GPTQ (against its OBS form in numpy)
   with independent implementations.
+- [`tests/python/test_chapters.py`](tests/python/test_chapters.py) checks
+  chapters 6–10 and the tiny model against numpy re-implementations
+  (vector-wise INT8, the decomposition, SmoothQuant's identity, NF4 against
+  INT4, the FP32/FP16/INT8 dot products, a numpy forward pass of the tiny
+  transformer with and without a quantised KV cache) and the standard
+  library's `NormalDist` (CDF and quantiles, so NF4's derivation).
 - [`scripts/make_fixtures.py`](scripts/make_fixtures.py) writes the
   reference's results; [`tests/unit/model.test.ts`](tests/unit/model.test.ts)
   requires the port to reproduce **every value exactly**: every code of
@@ -130,7 +180,14 @@ matrix, the activations, the MX blocks and the vectors summed come from a
 seeded integer generator; "normal" values are sums of 12 uniforms), the
 bits-per-weight accounting (FP16 scales; a zero point of the weight's
 width), and the FP16/BF16 sums rounding after every addition, as a scalar
-loop does (GPU kernels accumulate in FP32, in their own order).
+loop does (GPU kernels accumulate in FP32, in their own order). Chapters
+6–10 add: the outlier layer (two channels near ±20), the GPTQ/AWQ layer,
+the tiny transformer (random, rescaled weights; embeddings kept at full
+precision; per-channel bit counts for a 16-input channel), KIVI-style
+per-channel keys scaled over the whole 32-token prompt (KIVI groups over
+windows and keeps recent tokens in full precision), the FP4 KV layout of
+DeepSeek-V4.1-Flash with this site's own rounding of its scale, AWQ in
+eighths of α (the paper searches 20 points), and the 45 nm energy figures.
 
 **One known difference from ml_dtypes:** ml_dtypes converts a double to
 BF16 or FP8 through FP32, so a double close to a tie can round twice; this
@@ -183,6 +240,7 @@ at commit `7242143`, which copied it from the other companion sites:
 | `src/app/learn/`, `src/lib/mdx/`, `Layer.tsx`, `LayerToggle.tsx`, `MdxTable.tsx`, `Controls.tsx`, `Callout.tsx`                                    | copied                                                                             |
 | `.eslintrc.json`, `.prettierrc.json`, `tsconfig.json`, `vitest.config.ts`, `playwright.config.ts`, `lighthouserc.json`, `.github/workflows/ci.yml` | adapted (library job, new pages)                                                   |
 | `scripts/smoke-check.ts`, `scripts/capture-screenshots.ts`, `RUNBOOK.md`                                                                           | adapted                                                                            |
+| `src/lib/transformer/` (15 files)                                                                                                                  | transformer-explainer `src/lib/transformer/` at `0049cf3`, byte for byte           |
 
 A shared npm package for the design system would be cleaner in principle;
 for a handful of small sites, copying and recording the origin stays
@@ -231,7 +289,8 @@ export, then `pnpm smoke`.
 
 ```
 content/chapters/     The MDX chapters, each opening with its animation
-reference/            The Python numerics library
+reference/            The Python numerics library and the tiny transformer
+src/lib/transformer/  The Transformer Decoder Explainer's model (vendored)
 scripts/              make_fixtures, smoke-check, capture-screenshots, check_links
 src/app/              Routes: /, /learn, /learn/[slug], /formats, /about
 src/lib/num/          The TypeScript library, the captions, the values the prose quotes
@@ -252,6 +311,9 @@ tests/e2e/            Playwright + axe-core
 - Gupta et al., 2015 — _[Deep Learning with Limited Numerical Precision](https://arxiv.org/abs/1502.02551)_; Micikevicius et al., 2017 — _[Mixed Precision Training](https://arxiv.org/abs/1710.03740)_.
 - Kahan, 1965 — _Further remarks on reducing truncation errors_, [doi:10.1145/363707.363723](https://doi.org/10.1145/363707.363723); Higham, 1993 — _The accuracy of floating point summation_, [doi:10.1137/0914050](https://doi.org/10.1137/0914050); Goldberg, 1991 — _What every computer scientist should know about floating-point arithmetic_, [doi:10.1145/103162.103163](https://doi.org/10.1145/103162.103163).
 - Jacob et al., 2017 — _[Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference](https://arxiv.org/abs/1712.05877)_; Nagel et al., 2021 — _[A White Paper on Neural Network Quantization](https://arxiv.org/abs/2106.08295)_; Dettmers et al., 2023 — _[QLoRA](https://arxiv.org/abs/2305.14314)_ (NF4).
+- Dettmers et al., 2022 — _[LLM.int8()](https://arxiv.org/abs/2208.07339)_; Xiao et al., 2022 — _[SmoothQuant](https://arxiv.org/abs/2211.10438)_; Frantar et al., 2022 — _[GPTQ](https://arxiv.org/abs/2210.17323)_; Frantar, Singh and Alistarh, 2022 — _[Optimal Brain Compression](https://arxiv.org/abs/2208.11580)_; Lin et al., 2023 — _[AWQ](https://arxiv.org/abs/2306.00978)_.
+- Liu et al., 2024 — _[KIVI](https://arxiv.org/abs/2402.02750)_; Hooper et al., 2024 — _[KVQuant](https://arxiv.org/abs/2401.18079)_; DeepSeek-AI, 2026 — _[DeepSeek-V4.1-Flash](https://arxiv.org/abs/2609.19969)_ (FP4 KV cache, section 2.4.4).
+- Horowitz, 2014 — _Computing's energy problem (and what we can do about it)_, ISSCC, [doi:10.1109/ISSCC.2014.6757323](https://doi.org/10.1109/ISSCC.2014.6757323), as tabulated in Gholami et al., 2021 — _[A Survey of Quantization Methods for Efficient Neural Network Inference](https://arxiv.org/abs/2103.13630)_, Figure 7.
 - [ml_dtypes](https://github.com/jax-ml/ml_dtypes) (the reference for BF16, FP8, FP6 and FP4).
 - Okabe and Ito, 2008 — _[Color Universal Design](https://jfly.uni-koeln.de/color/)_ (the palette).
 
@@ -260,7 +322,7 @@ tests/e2e/            Playwright + axe-core
 PRs welcome. CI runs the library job (fixtures up to date, pytest),
 `format:check`, `lint`, `typecheck`, unit tests with coverage thresholds,
 e2e on a production build, and Lighthouse CI (performance, accessibility
-and best practices must each score at least 90 on `/`, `/formats` and three
+and best practices must each score at least 90 on `/`, `/formats` and five
 chapters).
 
 ## Licence

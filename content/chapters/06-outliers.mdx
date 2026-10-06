@@ -1,0 +1,89 @@
+<OutlierWidget>
+  <Eq
+    label="LLM.int8 mixed-precision decomposition: the output is the 16-bit product over the outlier channels plus the scaled INT8 product over the other channels"
+    tex="\begin{gathered} \htmlClass{hl-x}{Y} \approx \sum_{h \in \htmlClass{hl-outl}{O}} X^{\text{f16}}_{h} W^{\text{f16}}_{h} \;+\; \htmlClass{hl-int8}{s_x s_w \sum_{h \notin O} X^{\text{i8}}_{h} W^{\text{i8}}_{h}} \\ \htmlClass{hl-outl}{O} = \{\, h : \max_t |X_{t,h}| > 6 \,\} \end{gathered}"
+  />
+</OutlierWidget>
+
+<Layer kind="concept">
+
+Chapter 5 sized a scale for the largest value in its group. That works while the largest value is typical. In the activations of large transformers it often is not: a handful of **hidden dimensions carry values far larger than the rest, in almost every token**. Dettmers et al. report that they emerge in large language models at around 6.7 billion parameters, systematic (the same few dimensions, token after token) and sparse.
+
+The animation builds such an input: <V of="outlier.channels" fmt="int" /> channels × 32 tokens, where <V of="outlier.n_out" fmt="int" /> channels reach <V of="outlier.amax_out" /> while no other channel exceeds <V of="outlier.amax_normal" />. Then it multiplies the input by a small weight matrix three ways:
+
+- **Per-tensor INT8**: one scale for the whole input, set by the outliers. The ordinary channels are left with <V of="outlier.normal_levels" fmt="int" /> of the 255 codes, under five bits' worth. Output error <V of="outlier.err_tensor" fmt="sci" />.
+- **Vector-wise INT8**, LLM.int8()'s first idea: one scale per token (row of the input) and one per output channel. It does not help here, because every token contains the outliers: <V of="outlier.err_vector" fmt="sci" />.
+- **Mixed-precision decomposition**: find the channels with any value above a threshold (LLM.int8() uses 6), multiply those columns in 16-bit and everything else in vector-wise INT8, and add. Error <V of="outlier.err_mixed" fmt="sci" />, <V of="outlier.ratio" /> times smaller, while only <V of="outlier.n_out" fmt="int" /> of <V of="outlier.channels" fmt="int" /> channels run in 16-bit. In real models the outlier dimensions are a fraction of a percent of the total.
+
+The price is a second, irregular matrix multiply and the bookkeeping to split and merge. The paper's aim is memory: it reports that the overhead slows inference below 6.7B parameters, and that for matrix multiplications the size of a 175B model's it runs about twice as fast as FP16.
+
+</Layer>
+
+<SmoothWidget>
+  <Eq
+    label="SmoothQuant: divide each activation channel by s j and multiply the matching weight row by s j, which leaves the product unchanged; s j is the activation maximum to the alpha over the weight maximum to one minus alpha"
+    tex="\begin{gathered} Y = (X\,\mathrm{diag}(\htmlClass{hl-s}{s})^{-1})\,(\mathrm{diag}(\htmlClass{hl-s}{s})\,W) \\ \htmlClass{hl-s}{s_j} = \frac{\max |X_j|^{\htmlClass{hl-alpha}{\alpha}}}{\max |W_j|^{1-\htmlClass{hl-alpha}{\alpha}}} \end{gathered}"
+  />
+</SmoothWidget>
+
+<Layer kind="concept">
+
+**SmoothQuant** (Xiao et al.) keeps everything in INT8 by changing the problem instead. Activations are hard to quantise because their channels differ wildly; weights are easy because theirs do not. Dividing activation channel $j$ by a factor $s_j$ and multiplying row $j$ of the weights by the same $s_j$ leaves the product exactly as it was, in real arithmetic, and the division can be folded into the previous layer's weights, so it costs nothing at run time.
+
+The **migration strength** $\alpha$ says how much of the difficulty to move. At $\alpha = 0$ the activations keep it all; at $\alpha = 1$ the weights take it all; at $\alpha = 0.5$, the paper's default for most models, each channel's largest activation and largest weight become equal. The animation sweeps $\alpha$ in eighths over the same layer. Per-tensor W8A8 error falls from <V of="smooth.base" fmt="sci" /> with no smoothing to <V of="smooth.k4" fmt="sci" /> at $\alpha = 0.5$, <V of="smooth.gain4" /> times smaller; on this layer the best eighth is $\alpha =$ <V of="smooth.best_alpha" />, with <V of="smooth.best_err" fmt="sci" />. Too far, and the weights' columns become the outliers.
+
+</Layer>
+
+<Layer kind="maths">
+
+With per-tensor absmax INT8, a channel whose values span $[-a_j, a_j]$ uses a fraction $a_j / \max_k a_k$ of the code range. Its rounding noise is set by the global step $\Delta = \max_k a_k / 127$, so its signal-to-noise ratio falls by $20 \log_{10}(\max_k a_k / a_j)$ dB against a channel that owns the whole range. A channel twenty times smaller than the outlier loses $20 \log_{10} 20 \approx 26$ dB, more than four bits at about 6 dB per bit.
+
+SmoothQuant's scaling makes the activation channel maxima $a_j / s_j = a_j^{1-\alpha} b_j^{1-\alpha}$ and the weight row maxima $b_j s_j = a_j^{\alpha} b_j^{\alpha}$, where $b_j = \max|W_j|$. At $\alpha = \tfrac12$ both equal $\sqrt{a_j b_j}$: the spread of the activation maxima is replaced by the square root of the spread of $a_j b_j$.
+
+</Layer>
+
+<Layer kind="code">
+
+LLM.int8()'s decomposition, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts):
+
+```ts
+const outl: number[] = [];
+for (let i = 0; i < d; i++)
+  for (let k = 0; k < n; k++)
+    if (Math.abs(X[i]![k]!) > threshold) {
+      outl.push(i);
+      break;
+    }
+const normal = Array.from({ length: d }, (_, i) => i).filter(
+  (i) => !outl.includes(i),
+);
+const Y8 = int8Vectorwise(W, X, normal);
+```
+
+and SmoothQuant's scales, with $x^{k/8}$ built from square roots so the Python reference and this port agree bit for bit:
+
+```ts
+const s = Array.from(
+  { length: d },
+  (_, j) => powDyadic(xmax[j]!, k8) / powDyadic(wmax[j]!, 8 - k8),
+);
+const Xs = X.map((row, j) => row.map((x) => x / s[j]!));
+const Ws = W.map((row) => row.map((w, j) => w * s[j]!));
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The layer is generated, not taken from a model: 8 outputs, 16 input channels, 32 tokens, with two channels whose values sit near ±20, of one sign in every token, while the others are of order 1: the pattern LLM.int8() reports. The 16-bit part is computed exactly (the operands are FP16 numbers); a GPU would accumulate it in FP16 or FP32. The orders of magnitude are typical; the exact ratios belong to this data set.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [AWQ & GPTQ](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-05) and [quality impact, real perplexity numbers](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-07).
+- Dettmers et al., [LLM.int8(): 8-bit matrix multiplication for transformers at scale](https://arxiv.org/abs/2208.07339) (2022), section 3.2 for the threshold $\alpha = 6.0$.
+- Xiao et al., [SmoothQuant: accurate and efficient post-training quantization for large language models](https://arxiv.org/abs/2211.10438) (2022).
+- The kernels behind W8A8: GPU Kernels Explained, [quantised kernels](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels).
+
+</Callout>

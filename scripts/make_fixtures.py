@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "reference"))
 
 import numerics as N  # noqa: E402
+import tiny as T  # noqa: E402
 
 
 def hexf(x: float) -> str:
@@ -114,6 +115,9 @@ SUMS = [(fid, dist) for fid in ("fp16", "bf16") for dist in ("uniform", "ones", 
 SUM_N = 8192
 SUM_EVERY = 128
 ROUNDING = [(fid, dist) for fid in ("e4m3", "e2m1", "fp16") for dist in ("uniform", "low", "ties")]
+DEMO_OUTLIER = (8, 16, 32, 13)
+DEMO_NORMAL = (4096, 17)
+DOT_SEEDS = [(5, 6), (7, 8)]
 STAGNATION = [("fp16", 2.0**-13), ("bf16", 2.0**-10), ("e4m3", 2.0**-6)]
 
 
@@ -128,6 +132,23 @@ def site_data() -> dict:
         "nf4": N.NF4,
         "granularities": [list(g) for g in N.GRANULARITIES],
         "probeFormats": list(N.PROBE_FORMATS),
+        "outlierChannels": list(N.OUTLIER_CHANNELS),
+        "llmInt8Threshold": N.LLM_INT8_THRESHOLD,
+        "nf4Offset": N.NF4_OFFSET,
+        "horowitz": [{"id": k, **N.HOROWITZ[k]} for k in N.HOROWITZ_ORDER],
+        "dotMac": {k: list(v) for k, v in N.DOT_MAC.items()},
+    }
+
+
+def tiny_data() -> dict:
+    return {
+        "config": T.CONFIG,
+        "prompts": T.PROMPTS,
+        "calib": T.CALIB,
+        "weightConfigs": T.WEIGHT_CONFIGS,
+        "weightOrder": list(T.WEIGHT_ORDER),
+        "kvConfigs": T.KV_CONFIGS,
+        "kvOrder": list(T.KV_ORDER),
     }
 
 
@@ -203,6 +224,20 @@ def fixtures() -> dict:
         "before": N.w8a8_error(lay["W"], lay["X"])["err"], "after": N.w8a8_error(sq["Ws"], sq["Xs"])["err"],
     }
     out["probe"] = N.probe_steps()
+    ol = N.demo_outlier_layer(*DEMO_OUTLIER)
+    out["outlier"] = {"layer": digest([ol["W"], ol["X"]]), "W0": ol["W"][0], "X3": ol["X"][3], "run": N.outlier_steps(ol["W"], ol["X"])}
+    out["smooth"] = N.smooth_steps(ol["W"], ol["X"])
+    gs = N.gptq_steps(lay["W"], lay["X"], 4)
+    out["gptqSteps"] = {"bits4": {"digest": digest(gs["steps"]), "frames": [gs["steps"][i] for i in (0, 1, 8, 16)],
+                                  "errs": [[s["err_gptq"], s["err_rtn"]] for s in gs["steps"]]}}
+    gs3 = N.gptq_steps(lay["W"], lay["X"], 3)
+    out["gptqSteps"]["bits3"] = {"digest": digest(gs3["steps"]), "errs": [[s["err_gptq"], s["err_rtn"]] for s in gs3["steps"]]}
+    out["awqMeanAbs"] = aw["mean_abs"]
+    aw4 = N.awq_search(lay["W"], lay["X"], 4, 8)
+    out["awq4"] = {"best": aw4["best"], "errs": [r["err"] for r in aw4["results"]], "scales": digest([r["scales"] for r in aw4["results"]])}
+    out["nf4Build"] = N.nf4_build()
+    out["nf4VsInt4"] = N.nf4_vs_int4(N.demo_normal(*DEMO_NORMAL))
+    out["dot"] = {f"{s1}-{s2}": N.dot_steps(N.demo_block("normal", s1), N.demo_block("normal", s2)) for s1, s2 in DOT_SEEDS}
     out["pow"] = [[x, k, N.pow_dyadic(x, k)] for x in (0.001, 0.37, 1.0, 5.5, 1234.5) for k in range(9)]
     return finite(out)
 
@@ -212,9 +247,31 @@ def dump(obj: dict, indent: int | None = 1) -> str:
 
 
 # (generator, JSON indent): the fixtures are compact, the site data readable.
+def tiny_fixtures() -> dict:
+    """The tiny model's runs. The TS port matches these to a relative 1e-12 (shared transcendentals)."""
+    w = T.model_weights()
+    calib = T.calibration(w)
+    out: dict = {"emb0": w["tok_emb"][0], "wq0": w["blocks"][0]["W_q"][0], "w2last": w["blocks"][1]["W2"][-1]}
+    runs: dict = {"weights": {}, "kv": {}}
+    first = None
+    for target, order in (("weights", T.WEIGHT_ORDER), ("kv", T.KV_ORDER)):
+        for c in order:
+            r = T.run(target, c, w, calib)
+            first = first or r["refs"]
+            runs[target][c] = {"summary": r["summary"], "steps0": r["steps"][0],
+                               "agree": [sum(1 for s in st if s["agree"]) for st in r["steps"]]}
+    out["runs"] = runs
+    out["ref0"] = first[0]
+    out["margins"] = T.margins(first)
+    out["calibW2"] = calib["W2"][1][:2]
+    return finite(out)
+
+
 TARGETS = {
     ROOT / "src" / "data" / "formats.json": (site_data, 1),
+    ROOT / "src" / "data" / "tiny.json": (tiny_data, 1),
     ROOT / "tests" / "fixtures" / "num_fixtures.json": (fixtures, None),
+    ROOT / "tests" / "fixtures" / "tiny_fixtures.json": (tiny_fixtures, None),
 }
 
 

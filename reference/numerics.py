@@ -960,7 +960,7 @@ def awq_search(W: list[list[float]], X: list[list[float]], bits: int, group: int
     for r in results:
         if r["err"] < best["err"]:
             best = r
-    return {"results": results, "best": best["k"]}
+    return {"results": results, "best": best["k"], "mean_abs": mean_abs}
 
 
 def smoothquant(W: list[list[float]], X: list[list[float]], k8: int = 4) -> dict[str, Any]:
@@ -1288,3 +1288,401 @@ def probe_steps(lo: int = -26, hi: int = 18) -> list[dict[str, Any]]:
             row[fid] = {"code": c, "value": v if status != "overflow" else -1.0, "rel": rel, "status": status}
         out.append({"k": k, "x": x, "formats": row})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Chapter 6: activation outliers, LLM.int8() and SmoothQuant
+# ---------------------------------------------------------------------------
+
+OUTLIER_CHANNELS = (3, 11)
+LLM_INT8_THRESHOLD = 6.0  # Dettmers et al. (2022), section 3.2: alpha = 6.0
+
+
+def demo_outlier_layer(rows: int, d: int, n: int, seed: int, gain: float = 20.0) -> dict[str, Any]:
+    """
+    A small layer whose input has a few systematic outlier channels
+    (illustrative): channels in OUTLIER_CHANNELS carry values of one sign
+    about ``gain`` times larger than the rest, in every token, the pattern
+    LLM.int8() reports. Ordinary channels stay below 6 in magnitude (a sum of
+    12 uniforms minus 6 cannot reach it). Everything is rounded to FP16.
+    """
+    rng = Rng(seed)
+    W = [[round_to(0.1 * rng.normal(), "fp16") for _ in range(d)] for _ in range(rows)]
+    X = [[0.0] * n for _ in range(d)]
+    for i in range(d):
+        g = 0.4 + 0.6 * rng.uniform()
+        sign = 1.0 if rng.u32() & 1 else -1.0
+        for k in range(n):
+            z = rng.normal()
+            if i in OUTLIER_CHANNELS:
+                X[i][k] = round_to(sign * gain * (1 + 0.15 * z), "fp16")
+            else:
+                X[i][k] = round_to(g * z, "fp16")
+    return {"W": W, "X": X}
+
+
+def out_error(Y: list[list[float]], Yq: list[list[float]]) -> float:
+    """Mean squared difference of two outputs."""
+    rows = len(Y)
+    n = len(Y[0])
+    err = 0.0
+    for r in range(rows):
+        for k in range(n):
+            dd = Y[r][k] - Yq[r][k]
+            err += dd * dd
+    return err / (rows * n)
+
+
+def int8_vectorwise(W: list[list[float]], X: list[list[float]], channels: list[int]) -> list[list[float]]:
+    """
+    W X over the given input channels in INT8, vector-wise: one absmax scale
+    per row of W (output channel) and one per token (column of X). The
+    integer dot products are exact; each is scaled by s_w * s_x once.
+    """
+    rows = len(W)
+    n = len(X[0])
+    pw = [int_params([W[r][i] for i in channels], 8, "sym") for r in range(rows)]
+    px = [int_params([X[i][k] for i in channels], 8, "sym") for k in range(n)]
+    qw = [[quant_int(W[r][i], pw[r]) for i in channels] for r in range(rows)]
+    qx = [[quant_int(X[i][k], px[k]) for i in channels] for k in range(n)]
+    Y = [[0.0] * n for _ in range(rows)]
+    for r in range(rows):
+        for k in range(n):
+            acc = 0
+            for a, b in zip(qw[r], qx[k]):
+                acc += a * b
+            Y[r][k] = acc * (pw[r]["scale"] * px[k]["scale"])
+    return Y
+
+
+def llm_int8(W: list[list[float]], X: list[list[float]], threshold: float = LLM_INT8_THRESHOLD) -> dict[str, Any]:
+    """
+    LLM.int8()'s mixed-precision decomposition: the input channels with any
+    value above the threshold in magnitude are multiplied in 16-bit (here
+    exactly: the operands are FP16 numbers), the rest in vector-wise INT8.
+    """
+    d = len(X)
+    n = len(X[0])
+    rows = len(W)
+    outl = []
+    for i in range(d):
+        for k in range(n):
+            if abs(X[i][k]) > threshold:
+                outl.append(i)
+                break
+    normal = [i for i in range(d) if i not in outl]
+    Y8 = int8_vectorwise(W, X, normal)
+    Y = [[0.0] * n for _ in range(rows)]
+    for r in range(rows):
+        for k in range(n):
+            s = 0.0
+            for i in outl:
+                s += W[r][i] * X[i][k]
+            Y[r][k] = s + Y8[r][k]
+    return {"outliers": outl, "Y": Y}
+
+
+def tensor_levels(X: list[list[float]], channels: list[int]) -> dict[str, Any]:
+    """Per-tensor INT8 of X: its scale, and how many codes the given channels can reach."""
+    p = quantise_matrix(X, 8, "sym", "tensor")["params"][0]
+    mx = 0.0
+    for i in channels:
+        for v in X[i]:
+            if abs(v) > mx:
+                mx = abs(v)
+    top = rne_int(mx / p["scale"])
+    return {"scale": p["scale"], "top": top, "levels": 2 * top + 1}
+
+
+def outlier_steps(W: list[list[float]], X: list[list[float]]) -> dict[str, Any]:
+    """
+    Chapter 6: the activations, per-tensor INT8 (the outliers set the step,
+    so ordinary channels get a handful of codes), vector-wise INT8 (no
+    better: every token contains the outliers), then each channel checked
+    against the threshold in turn, and finally the decomposition.
+    """
+    d = len(X)
+    Y = matmul_wx(W, X)
+    amax = []
+    for i in range(d):
+        a = 0.0
+        for v in X[i]:
+            if abs(v) > a:
+                a = abs(v)
+        amax.append(a)
+    r = llm_int8(W, X)
+    normal = [i for i in range(d) if i not in r["outliers"]]
+    tl = tensor_levels(X, normal)
+    e_tensor = w8a8_error(W, X)["err"]
+    e_vector = out_error(Y, int8_vectorwise(W, X, list(range(d))))
+    e_mixed = out_error(Y, r["Y"])
+    steps: list[dict[str, Any]] = [
+        {"phase": "acts", "i": -1, "found": []},
+        {"phase": "tensor", "i": -1, "found": []},
+        {"phase": "vector", "i": -1, "found": []},
+    ]
+    found: list[int] = []
+    for i in range(d):
+        if amax[i] > LLM_INT8_THRESHOLD:
+            found.append(i)
+        steps.append({"phase": "scan", "i": i, "found": found[:]})
+    steps.append({"phase": "mixed", "i": -1, "found": found[:]})
+    return {
+        "amax": amax,
+        "outliers": r["outliers"],
+        "tensor_scale": tl["scale"],
+        "normal_levels": tl["levels"],
+        "err_tensor": e_tensor,
+        "err_vector": e_vector,
+        "err_mixed": e_mixed,
+        "signal": out_error(Y, [[0.0] * len(Y[0]) for _ in Y]),
+        "steps": steps,
+    }
+
+
+def smooth_steps(W: list[list[float]], X: list[list[float]]) -> list[dict[str, Any]]:
+    """
+    Chapter 6: SmoothQuant's migration strength alpha = k/8 swept from 0 to
+    1: the per-channel maxima of the smoothed activations and weights, and
+    the per-tensor W8A8 output error after smoothing (alpha = 0 is the
+    weights' scale alone; SmoothQuant's default is 0.5).
+    """
+    Y = matmul_wx(W, X)
+    out = []
+    for k8 in range(9):
+        sq = smoothquant(W, X, k8)
+        d = len(X)
+        xm = []
+        wm = []
+        for j in range(d):
+            a = 0.0
+            for v in sq["Xs"][j]:
+                if abs(v) > a:
+                    a = abs(v)
+            b = 0.0
+            for row in sq["Ws"]:
+                if abs(row[j]) > b:
+                    b = abs(row[j])
+            xm.append(a)
+            wm.append(b)
+        Wq = quantise_matrix(sq["Ws"], 8, "sym", "tensor")["deq"]
+        Xq = quantise_matrix(sq["Xs"], 8, "sym", "tensor")["deq"]
+        out.append({"k": k8, "alpha": k8 / 8, "s": sq["s"], "xmax": xm, "wmax": wm, "err": out_error(Y, matmul_wx(Wq, Xq))})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Chapter 7: GPTQ column by column
+# ---------------------------------------------------------------------------
+
+
+def gptq_steps(W: list[list[float]], X: list[list[float]], bits: int) -> dict[str, Any]:
+    """
+    Chapter 7: GPTQ's columns in order. Each step quantises one column and
+    pushes its error into the columns not yet quantised (``delta``: how much
+    each remaining weight moved). The layer error so far uses the quantised
+    columns plus the updated, unquantised rest; RTN's quantises the same
+    columns with no compensation.
+    """
+    g = gptq(W, X, bits)
+    Wr = rtn(W, bits)
+    rows = len(W)
+    d = len(W[0])
+    prev = [row[:] for row in W]
+    steps: list[dict[str, Any]] = [{"col": -1, "q": [], "err": [], "delta": [[0.0] * d for _ in range(rows)], "err_gptq": 0.0, "err_rtn": 0.0}]
+    for j, st in enumerate(g["steps"]):
+        P = [[g["Q"][r][c] if c <= j else st["w"][r][c] for c in range(d)] for r in range(rows)]
+        R = [[Wr[r][c] if c <= j else W[r][c] for c in range(d)] for r in range(rows)]
+        delta = [[st["w"][r][c] - prev[r][c] for c in range(d)] for r in range(rows)]
+        prev = st["w"]
+        steps.append({
+            "col": j,
+            "q": st["q"],
+            "err": st["err"],
+            "delta": delta,
+            "err_gptq": layer_error(W, P, X),
+            "err_rtn": layer_error(W, R, X),
+        })
+    return {"Q": g["Q"], "rtn": Wr, "scales": g["scales"], "steps": steps}
+
+
+# ---------------------------------------------------------------------------
+# Chapter 8: deriving NF4, and NF4 against INT4 on normal data
+# ---------------------------------------------------------------------------
+
+NF4_OFFSET = 0.9677083  # bitsandbytes create_normal_map's default
+
+
+def norm_cdf(x: float) -> float:
+    """
+    The standard normal CDF by its power series, Phi(x) = 1/2 + phi(x) *
+    sum x^(2n+1) / (2n+1)!! (every term positive for x > 0, so it converges
+    without cancellation for the |x| < 3 this site needs).
+    """
+    if x < 0:
+        return 1 - norm_cdf(-x)
+    term = x
+    s = x
+    n = 0
+    while True:
+        term = term * x * x / (2 * n + 3)
+        n += 1
+        if s + term == s:
+            break
+        s += term
+    return 0.5 + math.exp(-x * x / 2) / math.sqrt(2 * math.pi) * s
+
+
+def norm_ppf(p: float) -> float:
+    """The quantile function: bisection on norm_cdf over [-8, 8] until the interval stops shrinking."""
+    lo = -8.0
+    hi = 8.0
+    while True:
+        mid = (lo + hi) / 2
+        if mid == lo or mid == hi:
+            return mid
+        if norm_cdf(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+
+
+def nf4_build() -> dict[str, Any]:
+    """
+    bitsandbytes' create_normal_map(offset, use_extra_value=True) in
+    doubles: 8 positive quantiles at p = offset .. 0.5 (9 evenly spaced
+    points, the last dropped), 7 negative ones (8 points), and 0; sorted and
+    divided by the largest. The steps reveal one value at a time.
+    """
+    pos = []
+    for i in range(8):
+        p = NF4_OFFSET + (0.5 - NF4_OFFSET) * i / 8
+        pos.append({"p": p, "z": norm_ppf(p)})
+    neg = []
+    for i in range(7):
+        p = NF4_OFFSET + (0.5 - NF4_OFFSET) * i / 7
+        neg.append({"p": 1 - p, "z": -norm_ppf(p)})
+    raw = sorted([q["z"] for q in pos] + [0.0] + [q["z"] for q in neg])
+    mx = raw[-1]
+    values = [v / mx for v in raw]
+    diff = 0.0
+    for a, b in zip(values, NF4):
+        if abs(a - b) > diff:
+            diff = abs(a - b)
+    steps: list[dict[str, Any]] = [{"phase": "pdf", "n": 0}]
+    for i in range(8):
+        steps.append({"phase": "pos", "n": i + 1})
+    for i in range(7):
+        steps.append({"phase": "neg", "n": i + 1})
+    steps.append({"phase": "zero", "n": 16})
+    steps.append({"phase": "normalise", "n": 16})
+    steps.append({"phase": "compare", "n": 16})
+    return {"pos": pos, "neg": neg, "raw": raw, "max": mx, "values": values, "max_diff": diff, "steps": steps}
+
+
+def demo_normal(n: int, seed: int) -> list[float]:
+    """n approximately normal values (Irwin-Hall), as FP16, standing in for a layer's weights."""
+    rng = Rng(seed)
+    return [round_to(rng.normal(), "fp16") for _ in range(n)]
+
+
+def nf4_vs_int4(xs: list[float], block: int = 64) -> dict[str, Any]:
+    """Blockwise absmax NF4 against blockwise absmax INT4 (codes -7..7), same blocks: mean squared errors."""
+    nf = nf4_quantise(xs, block)["values"]
+    i4 = []
+    for b0 in range(0, len(xs), block):
+        blk = xs[b0:b0 + block]
+        p = int_params(blk, 4, "sym")
+        i4.extend(dequant_int(quant_int(x, p), p) for x in blk)
+    e_nf = 0.0
+    e_i4 = 0.0
+    sig = 0.0
+    for x, a, b in zip(xs, nf, i4):
+        e_nf += (x - a) * (x - a)
+        e_i4 += (x - b) * (x - b)
+        sig += x * x
+    n = len(xs)
+    return {"mse_nf4": e_nf / n, "mse_int4": e_i4 / n, "signal": sig / n}
+
+
+# ---------------------------------------------------------------------------
+# Chapter 10: one dot product in four number systems, and its energy
+# ---------------------------------------------------------------------------
+
+# Energy (pJ) and area (um^2) per operation, 45 nm (Horowitz, ISSCC 2014, as
+# tabulated by Gholami et al. 2021, Figure 7). None = not given.
+HOROWITZ: dict[str, dict[str, Any]] = {
+    "add8": {"label": "8-bit integer add", "pj": 0.03, "um2": 36},
+    "add16": {"label": "16-bit integer add", "pj": 0.05, "um2": 67},
+    "add32": {"label": "32-bit integer add", "pj": 0.1, "um2": 137},
+    "fadd16": {"label": "16-bit float add", "pj": 0.4, "um2": 1360},
+    "fadd32": {"label": "32-bit float add", "pj": 0.9, "um2": 4184},
+    "mul8": {"label": "8-bit integer multiply", "pj": 0.2, "um2": 282},
+    "mul32": {"label": "32-bit integer multiply", "pj": 3.1, "um2": 3495},
+    "fmul16": {"label": "16-bit float multiply", "pj": 1.1, "um2": 1640},
+    "fmul32": {"label": "32-bit float multiply", "pj": 3.7, "um2": 7700},
+    "sram32": {"label": "32-bit SRAM read (8 KB)", "pj": 5.0, "um2": None},
+    "dram32": {"label": "32-bit DRAM read", "pj": 640.0, "um2": None},
+}
+HOROWITZ_ORDER = tuple(HOROWITZ)
+
+# Energy per multiply-accumulate of each pipeline, from the table above:
+# FP32 and FP16 multiply and add in their own format; INT8 multiplies 8-bit
+# integers and accumulates in a 32-bit integer.
+DOT_MAC = {"fp32": ("fmul32", "fadd32"), "fp16": ("fmul16", "fadd16"), "int8": ("mul8", "add32")}
+
+
+def mac_pj(kind: str) -> float:
+    m, a = DOT_MAC[kind]
+    return HOROWITZ[m]["pj"] + HOROWITZ[a]["pj"]
+
+
+def dot_steps(a: list[float], b: list[float]) -> dict[str, Any]:
+    """
+    Chapter 10: the dot product of two 32-value blocks, one product per
+    step, in (1) FP32 multiply and add, (2) FP16 multiply and add, (3) INT8
+    codes with one absmax scale per block, integer products summed exactly
+    and scaled once at the end (one FP32 multiply), and (4) MXFP4: E2M1
+    elements whose products are summed exactly, then scaled by the two
+    shared power-of-two scales (an exponent add). The reference is the
+    double-precision sum. Energy accumulates per multiply-accumulate.
+    """
+    k = len(a)
+    pa = int_params(a, 8, "sym")
+    pb = int_params(b, 8, "sym")
+    ma = mx_quantise(a, "mxfp4")
+    mb = mx_quantise(b, "mxfp4")
+    ea = pow2(ma["shared_exp"])
+    eb = pow2(mb["shared_exp"])
+    ref = 0.0
+    s32 = 0.0
+    s16 = 0.0
+    acc8 = 0
+    accmx = 0.0
+    steps = []
+    for i in range(k):
+        ref += a[i] * b[i]
+        s32 = round_to(s32 + round_to(a[i] * b[i], "fp32"), "fp32")
+        s16 = round_to(s16 + round_to(a[i] * b[i], "fp16"), "fp16")
+        qa = quant_int(a[i], pa)
+        qb = quant_int(b[i], pb)
+        acc8 += qa * qb
+        pe = (ma["values"][i] / ea) * (mb["values"][i] / eb)
+        accmx += pe
+        steps.append({
+            "i": i,
+            "ref": ref,
+            "fp32": s32,
+            "fp16": s16,
+            "int8_acc": acc8,
+            "int8": acc8 * (pa["scale"] * pb["scale"]),
+            "mx_acc": accmx,
+            "mx": accmx * (ea * eb),
+            "q8": [qa, qb],
+            "e2m1": [ma["values"][i] / ea, mb["values"][i] / eb],
+        })
+    return {
+        "scales": {"int8": [pa["scale"], pb["scale"]], "mx": [ma["shared_exp"], mb["shared_exp"]]},
+        "pj": {kind: mac_pj(kind) for kind in DOT_MAC},
+        "steps": steps,
+    }

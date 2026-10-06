@@ -1,0 +1,63 @@
+<DotWidget>
+  <Eq
+    label="MX dot product: the two block scales multiply the sum of the element products; the INT8 dot product sums integer products and scales once"
+    tex="\begin{gathered} \mathrm{Dot}(A, B) = \htmlClass{hl-scale}{X^{(A)} X^{(B)}} \htmlClass{hl-acc}{\sum_{i=1}^{k} P^{(A)}_i \times P^{(B)}_i} \\ \text{INT8:}\ \ \htmlClass{hl-scale}{s_a s_b} \htmlClass{hl-acc}{\sum_i q^{(a)}_i q^{(b)}_i}, \qquad E \approx k \cdot \htmlClass{hl-p}{e_{\text{MAC}}} \end{gathered}"
+  />
+</DotWidget>
+
+<Layer kind="concept">
+
+Everything so far has been about accuracy. The reason to accept any of it is hardware: narrow numbers are cheaper to **store**, to **move** and to **multiply**.
+
+**Moving.** For a memory-bound kernel, such as decoding one token at a time, time is bytes over bandwidth, so 4-bit weights are up to four times faster than 16-bit ones. The kernel reads packed weights and **dequantises them in registers**, just before the multiply, and never writes the wide copy anywhere; GPU Kernels Explained [animates exactly that](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels), and shows when the gain disappears (a large batch makes the layer compute-bound).
+
+**Multiplying.** A multiplier's cost grows roughly with the square of its width. In Horowitz's 45 nm figures (below), an 8-bit integer multiply-add costs <V of="dot.pj_int8" /> pJ against <V of="dot.pj_fp32" /> pJ for FP32, <V of="dot.ratio_fp32_int8" /> times less, and reading a 32-bit word from DRAM costs <V of="hz.dram32.pj" fmt="int" /> pJ, more than a hundred FP32 multiply-adds. Narrow formats pay twice: in the arithmetic, and far more in the data movement.
+
+**Block scales in the datapath.** The MX formats of [chapter 4](/learn/04-formats-zoo) were designed for this. The spec defines the dot product of two MX vectors as the product of their two block scales times the sum of the element products. The scales are powers of two, so applying them is an exponent add, and the reduction "only computes on the elements": narrow multipliers, an accumulator, and one scale step per block. Recent accelerators implement MXFP8, MXFP6 and MXFP4 (or close variants with finer scales) in their matrix units.
+
+The animation computes one 32-element dot product four ways, one multiply-accumulate per step. FP32 ends <V of="dot.rel_fp32" fmt="sci" /> from the exact answer, FP16 (multiplying and adding in FP16) <V of="dot.rel_fp16" fmt="pct" /> off, INT8 with one scale per block <V of="dot.rel_int8" fmt="pct" />, and MXFP4 <V of="dot.rel_mx" fmt="pct" />. Energy for the 32 multiply-accumulates: <V of="dot.e_fp32" /> pJ in FP32, <V of="dot.e_fp16" /> in FP16, <V of="dot.e_int8" /> in INT8. MXFP4's single block shows why its users rely on many blocks, accumulate in FP32, and keep sensitive layers wider: one 4-bit block of a normal vector is a coarse picture of it.
+
+</Layer>
+
+<EnergyChart />
+
+<Layer kind="maths">
+
+An integer array multiplier for $b$-bit operands adds $b$ partial products of $b$ bits, so its area and energy grow as about $b^2$; an adder grows as about $b$. Horowitz's table follows that: an 8-bit multiply is <V of="hz.mul8.pj" /> pJ and a 32-bit one <V of="hz.mul32.pj" /> pJ, 15.5 times more for 4 times the width. A floating-point multiply is an integer multiply of the significands plus an exponent add and a normalisation, so a 32-bit float multiply (24-bit significand) costs about as much as a 32-bit integer one, and a float add costs much more than an integer add (alignment shifters and normalisation): <V of="hz.fadd32.pj" /> pJ against <V of="hz.add32.pj" /> pJ.
+
+The MX dot product's error has two sources. The elements' rounding, relative to each block's scale, is at most half a step of the element format; and the sum of $k$ products, which the spec lets implementations compute at any internal precision. With the shared scales factored out, the products of two E2M1 elements are exact in a few bits, so a wide enough accumulator makes the reduction exact, as it is here.
+
+</Layer>
+
+<Layer kind="code">
+
+The four pipelines, one step each, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts):
+
+```ts
+ref += a[i]! * b[i]!;
+s32 = roundTo(s32 + roundTo(a[i]! * b[i]!, "fp32"), "fp32");
+s16 = roundTo(s16 + roundTo(a[i]! * b[i]!, "fp16"), "fp16");
+const qa = quantInt(a[i]!, pa);
+const qb = quantInt(b[i]!, pb);
+acc8 += qa * qb;
+const xa = ma.values[i]! / ea;
+const xb = mb.values[i]! / eb;
+accmx += xa * xb;
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+Two blocks of 32 approximately normal values (generated). FP16 here multiplies and accumulates in FP16, the worst case; tensor cores accumulate FP16 products in FP32. INT8 uses one absmax scale per block. The energy figures are for a 45 nm process (Horowitz, ISSCC 2014): newer processes are cheaper per operation, but the ratios between operations, and between arithmetic and DRAM, have held their shape. FP4 and FP8 multipliers are not in that table, so MXFP4 gets no energy bar.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- NVIDIA GPU series: [FP4 E2M1, the element](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-04), [MXFP4 vs NVFP4](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-07), [where it lives: Blackwell tensor cores](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-08) and [number formats in tensor cores](https://brendanjameslynskey.github.io/NVIDIA_GPU_03_Tensor_Cores/#slide-08).
+- GPU Kernels Explained: [quantised kernels](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels) and [GEMM](https://gpu-kernels-explained.vercel.app/learn/07-gemm).
+- Horowitz, [Computing's energy problem (and what we can do about it)](https://doi.org/10.1109/ISSCC.2014.6757323), ISSCC 2014; the table as reproduced by Gholami et al., [A survey of quantization methods for efficient neural network inference](https://arxiv.org/abs/2103.13630) (2021), Figure 7.
+- OCP [Microscaling Formats (MX) Specification v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf), section 6 (dot products).
+
+</Callout>

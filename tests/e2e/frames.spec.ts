@@ -6,6 +6,7 @@
 import { expect, test, type Locator } from "@playwright/test";
 
 import fx from "../fixtures/num_fixtures.json";
+import tfx from "../fixtures/tiny_fixtures.json";
 
 import {
   granCaption,
@@ -17,6 +18,13 @@ import {
   zoomCaption,
   zpCaption,
   type GranSummary,
+  awqCaption,
+  dotCaption,
+  gptqCaption,
+  nf4Caption,
+  outlierCaption,
+  smoothCaption,
+  tinyCaption,
 } from "@/lib/num/captions";
 import {
   demoBlock,
@@ -30,7 +38,13 @@ import {
   type SumStep,
   type ZoomStep,
   type ZpStep,
+  type DotRun,
+  type GptqFrame,
+  type Nf4Build,
+  type OutlierRun,
+  type SmoothStep,
 } from "@/lib/num/model";
+import { KV_CONFIGS, WEIGHT_CONFIGS, type TinyStep } from "@/lib/num/tiny";
 
 // No autoplay (reduced motion): the test sets each frame itself.
 test.use({ contextOptions: { reducedMotion: "reduce" } });
@@ -186,5 +200,115 @@ test("zero point: INT4", async ({ page }) => {
     await expect(caption(fig)).toHaveText(
       zpCaption(xs, z.sym, z.asym, z.steps[s] as ZpStep, 4),
     );
+  }
+});
+
+test("outliers: per tensor, the scan, the decomposition", async ({ page }) => {
+  await page.goto("/learn/06-outliers");
+  const fig = page.getByTestId("outlier-widget");
+  const r = fx.outlier.run as OutlierRun;
+  for (const s of [0, 1, 6, 14, r.steps.length - 1]) {
+    await show(fig, s);
+    await expect(caption(fig)).toHaveText(outlierCaption(r, s, 32));
+  }
+});
+
+test("SmoothQuant: alpha 0, 1/2 and 1", async ({ page }) => {
+  await page.goto("/learn/06-outliers");
+  const fig = page.getByTestId("smooth-widget");
+  const st = fx.smooth as SmoothStep[];
+  const base = fx.outlier.run.err_tensor;
+  for (const s of [0, 4, 8]) {
+    await show(fig, s);
+    await expect(caption(fig)).toHaveText(smoothCaption(st[s]!, base));
+  }
+});
+
+test("GPTQ: INT4, columns -1, 0, 7 and 15", async ({ page }) => {
+  await page.goto("/learn/07-gptq");
+  const fig = page.getByTestId("gptq-widget");
+  const frames = fx.gptqSteps.bits4.frames as GptqFrame[];
+  for (const [s, k] of [
+    [0, 0],
+    [1, 1],
+    [8, 2],
+    [16, 3],
+  ] as const) {
+    await show(fig, s);
+    await expect(caption(fig)).toHaveText(gptqCaption(frames[k]!, 4, 16));
+  }
+});
+
+test("NF4: derivation steps", async ({ page }) => {
+  await page.goto("/learn/08-awq-and-nf4");
+  const fig = page.getByTestId("nf4-widget");
+  const b = fx.nf4Build as Nf4Build;
+  for (const s of [0, 3, 12, 18]) {
+    await show(fig, s);
+    await expect(caption(fig)).toHaveText(nf4Caption(b, s));
+  }
+});
+
+test("AWQ: INT3 then INT4", async ({ page }) => {
+  await page.goto("/learn/08-awq-and-nf4");
+  const fig = page.getByTestId("awq-widget");
+  for (const [bits, py] of [
+    [3, fx.awq],
+    [4, fx.awq4],
+  ] as const) {
+    if (bits === 4)
+      await change(fig, () => fig.getByRole("radio", { name: "INT4" }).click());
+    for (const k of [0, py.best, 8]) {
+      await show(fig, k);
+      await expect(caption(fig)).toHaveText(
+        awqCaption(
+          { k, alpha: k / 8, err: py.errs[k]! },
+          py.best,
+          py.errs[0]!,
+          bits,
+        ),
+      );
+    }
+  }
+});
+
+test("tiny model: NF4 weights, then INT2 KV cache", async ({ page }) => {
+  await page.goto("/learn/08-awq-and-nf4");
+  const fw = page.getByTestId("tiny-weights-widget");
+  const w = tfx.runs.weights.nf4.steps0 as TinyStep[];
+  for (const s of [0, 15, 31]) {
+    await show(fw, s);
+    await expect(caption(fw)).toHaveText(
+      tinyCaption(w[s]!, 32, WEIGHT_CONFIGS.nf4.label),
+    );
+  }
+  await page.goto("/learn/09-kv-cache");
+  const fk = page.getByTestId("tiny-kv-widget");
+  await change(fk, async () => {
+    await fk.getByTestId("format").selectOption("int2_tok");
+  });
+  const k = tfx.runs.kv.int2_tok.steps0 as TinyStep[];
+  for (const s of [0, 15, 31]) {
+    await show(fk, s);
+    await expect(caption(fk)).toHaveText(
+      tinyCaption(k[s]!, 32, KV_CONFIGS.int2_tok.label),
+    );
+  }
+});
+
+test("dot product: pair 1 then pair 2", async ({ page }) => {
+  await page.goto("/learn/10-hardware");
+  const fig = page.getByTestId("dot-widget");
+  for (const [key, label] of [
+    ["5-6", null],
+    ["7-8", "pair 2"],
+  ] as const) {
+    if (label)
+      await change(fig, () => fig.getByRole("radio", { name: label }).click());
+    const r = fx.dot[key] as DotRun;
+    for (const s of [0, 15, 31]) {
+      await show(fig, s);
+      await expect(caption(fig)).toHaveText(dotCaption(r, s));
+    }
   }
 });

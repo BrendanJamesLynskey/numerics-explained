@@ -1,0 +1,63 @@
+<GptqWidget>
+  <Eq
+    label="GPTQ: quantise column j, compute its error divided by the diagonal of the Cholesky factor of the inverse Hessian, and subtract that error times the factor's row from the columns not yet quantised"
+    tex="\begin{gathered} \htmlClass{hl-col}{q_j} = \mathrm{quant}(w_j), \qquad e_j = \frac{w_j - q_j}{[\mathbf{H}^{-1}]^{\mathrm{chol}}_{jj}} \\ \htmlClass{hl-upd}{w_{j+1:} \leftarrow w_{j+1:} - e_j \, [\mathbf{H}^{-1}]^{\mathrm{chol}}_{j,\,j+1:}}, \qquad \mathbf{H} = 2 X X^{\top} \end{gathered}"
+  />
+</GptqWidget>
+
+<Layer kind="concept">
+
+Rounding each weight to its nearest grid point (round-to-nearest, RTN) minimises the error **in the weights**. What matters is the error **in the layer's output**, $\| W X - \hat W X \|^2$ over real inputs $X$, and there the errors of different weights can cancel. **GPTQ** (Frantar et al.) quantises a layer one input column at a time and, after each column, **adjusts the columns not yet quantised** to compensate for the error just made, using second-order information about the inputs: the Hessian $\mathbf{H} = 2 X X^\top$ of the output error.
+
+Watch the animation: a column turns into its quantised values, and the weights to its right shift a little (the middle panel), each by an amount set by how strongly its input is correlated with the one just rounded. The bottom panel tracks the layer's output error with the columns done so far quantised. Plain rounding of the same columns climbs steadily; GPTQ climbs more slowly, because each step's compensation undoes part of the damage. On this layer (8 outputs, 16 inputs, 64 calibration inputs) GPTQ ends at <V of="gptq.b4.gptq" /> against <V of="gptq.b4.rtn" /> for INT4 round-to-nearest, <V of="gptq.b4.ratio" /> times smaller; at INT3, <V of="gptq.b3.gptq" /> against <V of="gptq.b3.rtn" />.
+
+GPTQ's contribution was making this affordable at scale: the paper quantises 175-billion-parameter models to 3 or 4 bits per weight in about four GPU hours. It processes every row in the same column order (which turns out to cost little accuracy), batches the updates so the GPU stays busy, and works from a Cholesky factor of $\mathbf{H}^{-1}$ for numerical stability.
+
+</Layer>
+
+<Layer kind="maths">
+
+GPTQ descends from Optimal Brain Quantization (OBQ), itself from Optimal Brain Surgeon. For one output row $w$ with the quadratic loss $(w - \hat w)^\top \mathbf{H} (w - \hat w)/2$, quantising coordinate $j$ to $q_j$ and letting the free coordinates $F$ re-optimise gives the update
+
+$$
+\delta_F = -\frac{w_j - q_j}{[\mathbf{H}_F^{-1}]_{jj}} \, (\mathbf{H}_F^{-1})_{:,j}.
+$$
+
+After removing $j$, the inverse Hessian of the remaining coordinates is one step of Gaussian elimination on $\mathbf{H}_F^{-1}$. Going through the columns in a fixed order, those successive eliminations are exactly the rows of the upper Cholesky factor $U$ of $\mathbf{H}^{-1}$, so the whole algorithm needs one Cholesky decomposition, not one matrix update per weight. The **dampening** term (here 1% of the mean diagonal added to $\mathbf{H}$) keeps the factorisation stable when inputs are nearly collinear.
+
+</Layer>
+
+<Layer kind="code">
+
+The inner loop, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts) (`U` is the upper Cholesky factor of $\mathbf{H}^{-1}$; the scales are fixed per output row from the original weights):
+
+```ts
+for (let j = 0; j < d; j++) {
+  const errs: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    const w = Wc[r]![j]!;
+    const q = dequantInt(quantInt(w, params[r]!), params[r]!);
+    Q[r]![j] = q;
+    const e = (w - q) / U[j]![j]!;
+    errs.push(e);
+    for (let k = j + 1; k < d; k++) Wc[r]![k]! -= e * U[j]![k]!;
+  }
+```
+
+The Python reference is checked against a numpy implementation of the same algorithm, and this TypeScript port against the Python, bit for bit.
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The layer and its calibration inputs are generated, with input channels of different sizes and mixed together so they are correlated (correlation is what gives GPTQ something to exploit). Real GPTQ runs block by block with lazy batch updates; that changes the speed, not the result. On the tiny transformer of [chapter 8](/learn/08-awq-and-nf4), GPTQ at INT3 is one of the weight formats you can try.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [AWQ & GPTQ, learned INT4](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-05) and [PTQ vs calibration-aware vs QAT](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-03).
+- Linear Algebra for AI: [inner products and norms](https://brendanjameslynskey.github.io/Linear_Algebra_AI_04_Inner_Products_and_Norms/#slide-01).
+- Frantar et al., [GPTQ: accurate post-training quantization for generative pre-trained transformers](https://arxiv.org/abs/2210.17323) (2022); Frantar, Singh and Alistarh, [Optimal Brain Compression](https://arxiv.org/abs/2208.11580) (2022), which introduced OBQ.
+
+</Callout>

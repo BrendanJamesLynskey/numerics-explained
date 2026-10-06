@@ -14,6 +14,14 @@ const ANIMATIONS = [
   ["/learn/04-formats-zoo", "mx-widget"],
   ["/learn/05-quantisation-basics", "granularity-widget"],
   ["/learn/05-quantisation-basics", "zeropoint-widget"],
+  ["/learn/06-outliers", "outlier-widget"],
+  ["/learn/06-outliers", "smooth-widget"],
+  ["/learn/07-gptq", "gptq-widget"],
+  ["/learn/08-awq-and-nf4", "nf4-widget"],
+  ["/learn/08-awq-and-nf4", "awq-widget"],
+  ["/learn/08-awq-and-nf4", "tiny-weights-widget"],
+  ["/learn/09-kv-cache", "tiny-kv-widget"],
+  ["/learn/10-hardware", "dot-widget"],
 ] as const;
 
 async function step(fig: Locator): Promise<number> {
@@ -43,6 +51,8 @@ for (const scheme of ["light", "dark"] as const) {
         test(`${id} plays, steps, scrubs and resets`, async ({ page }) => {
           const errs = errors(page);
           await page.goto(path);
+          // every widget on the page has loaded (and laid out) first
+          await expect(page.locator("[data-pending-widget]")).toHaveCount(0);
           const fig = page.getByTestId(id);
           await expect(fig).toBeVisible();
           await fig.scrollIntoViewIfNeeded();
@@ -87,7 +97,7 @@ for (const scheme of ["light", "dark"] as const) {
           await page.keyboard.press(" ");
           await expect(fig).toHaveAttribute("data-playing", "false");
           // speed and reset
-          await fig.getByRole("combobox").selectOption("4");
+          await fig.getByRole("combobox", { name: "Speed" }).selectOption("4");
           await fig
             .getByRole("button", { name: "Reset to the first step" })
             .click();
@@ -113,6 +123,7 @@ test.describe("reduced motion", () => {
   for (const [path, id] of ANIMATIONS) {
     test(`${id} does not play by itself`, async ({ page }) => {
       await page.goto(path);
+      await expect(page.locator("[data-pending-widget]")).toHaveCount(0);
       const fig = page.getByTestId(id);
       await expect(fig).toBeVisible();
       await fig.scrollIntoViewIfNeeded();
@@ -158,6 +169,7 @@ test.describe("phone labels", () => {
       page,
     }) => {
       await page.goto(path);
+      await expect(page.locator("[data-pending-widget]")).toHaveCount(0);
       const fig = page.getByTestId(id);
       await fig.scrollIntoViewIfNeeded();
       // let the size observer settle

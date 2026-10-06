@@ -1,6 +1,6 @@
 /**
  * The chapters' MDX: each opens with its animation; every ```ts block is
- * cut from the library (whitespace-collapsed, because Prettier reformats
+ * cut from the library, src/lib/num/model.ts or tiny.ts (whitespace-collapsed, because Prettier reformats
  * MDX code blocks); every equation compiles in KaTeX; internal links point
  * at real pages; deck links point at the owner's slide decks with a slide
  * anchor; every arXiv link is one of the ids checked at export.arxiv.org
@@ -37,6 +37,15 @@ export const ARXIV = new Set([
   "2209.05433",
   "2310.10537",
   "2305.14314",
+  "2208.07339",
+  "2211.10438",
+  "2210.17323",
+  "2208.11580",
+  "2306.00978",
+  "2402.02750",
+  "2401.18079",
+  "2609.19969",
+  "2103.13630",
 ]);
 
 describe("chapter files", () => {
@@ -49,12 +58,14 @@ for (const f of FILES) {
   const src = readFileSync(path.join(DIR, f), "utf8");
   describe(f, () => {
     it("opens with its animation (the hero comes before any prose)", () => {
-      expect(src.trimStart()).toMatch(/^<[A-Z][a-zA-Z]+Widget>/);
+      expect(src.trimStart()).toMatch(/^<[A-Z][a-zA-Z0-9]+Widget[ >\n]/);
     });
 
     it("cuts every TypeScript block from the library source", () => {
       const model = squash(
-        readFileSync(path.join(ROOT, "src/lib/num/model.ts"), "utf8"),
+        ["model.ts", "tiny.ts"]
+          .map((f) => readFileSync(path.join(ROOT, "src/lib/num", f), "utf8"))
+          .join("\n"),
       );
       const blocks = [...src.matchAll(/```ts\n([\s\S]*?)```/g)].map(
         (m) => m[1]!,
@@ -94,7 +105,7 @@ for (const f of FILES) {
       )) {
         if (m[1] === "Hardware_Aware_Quantisation") continue;
         expect(m[1], m[0]).toMatch(
-          /^(Local_LLM_\d\d_|Google_TPU_\d\d_|Linear_Algebra_AI_\d\d_|NVIDIA_GPU_\d\d_|AI_MMUL_Unit$)/,
+          /^(Local_LLM_\d\d_|Google_TPU_\d\d_|Linear_Algebra_AI_\d\d_|NVIDIA_GPU_\d\d_|Arch_\d\d_|AI_MMUL_Unit$)/,
         );
         expect(m[2], m[0]).toMatch(/^#(slide-\d\d|s\d+)$/);
       }

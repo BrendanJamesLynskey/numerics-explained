@@ -138,6 +138,71 @@ describe("numbers written in the prose", () => {
   });
 });
 
+describe("numbers written in the prose, chapters 6-10", () => {
+  const n = (k: string) => lookup(k) as number;
+  it("chapter 6", () => {
+    // "under five bits' worth"
+    expect(Math.log2(n("outlier.normal_levels"))).toBeLessThan(5);
+    // "with two channels whose values sit near ±20 ... the others are of order 1"
+    expect(n("outlier.amax_out")).toBeGreaterThan(20);
+    expect(n("outlier.amax_out")).toBeLessThan(30);
+    expect(n("outlier.amax_normal")).toBeLessThan(6);
+    expect(n("outlier.n_out")).toBe(2);
+    // "loses 20 log10 20 ≈ 26 dB, more than four bits at about 6 dB per bit"
+    expect(Math.round(20 * Math.log10(20))).toBe(26);
+    expect(26 / 6.02).toBeGreaterThan(4);
+    // "Too far, and the weights' columns become the outliers": alpha = 1 is worse than the best
+    expect(n("smooth.k8")).toBeGreaterThan(n("smooth.best_err"));
+  });
+  it("chapter 7", () => {
+    expect(n("gptq.b4.gptq")).toBeLessThan(n("gptq.b4.rtn"));
+    expect(n("gptq.b3.gptq")).toBeLessThan(n("gptq.b3.rtn"));
+  });
+  it("chapter 8", () => {
+    // "about 1.85 standard deviations"
+    expect(n("nf4.zmax")).toBeCloseTo(1.85, 2);
+    expect(n("nf4.mse_nf4")).toBeLessThan(n("nf4.mse_int4"));
+    expect(n("awq.b3.best")).toBeLessThan(n("awq.b3.base"));
+    // "each bit removed roughly doubles the drift or more"
+    const w = (c: string) => n(`tiny.weights.${c}.drift`);
+    expect((w("int4_ch") / w("int8_ch")) ** (1 / 4)).toBeGreaterThan(1.9);
+    expect(w("int3_ch") / w("int4_ch")).toBeGreaterThan(2);
+    // "with the same blocks of 64, NF4's grid beats INT4's"
+    expect(w("nf4")).toBeLessThan(w("int4_b64"));
+    // "GPTQ ... recovers part of what plain INT3 rounding loses"
+    expect(w("gptq3_ch")).toBeLessThan(w("int3_ch"));
+    expect(n("tiny.weights.gptq3_ch.agree")).toBeGreaterThan(
+      n("tiny.weights.int3_ch.agree"),
+    );
+    expect(n("tiny.weights.int8_ch.n")).toBe(128);
+  });
+  it("chapter 9", () => {
+    const k = (c: string, f: string) => n(`tiny.kv.${c}.${f}`);
+    // "Eight bits are close to free; four bits cost a few per cent of drift
+    // and almost no flipped predictions; two bits break it"
+    expect(k("int8_tok", "drift")).toBeLessThan(0.01);
+    expect(k("int4_tok", "drift")).toBeLessThan(0.1);
+    expect(k("int4_tok", "agree")).toBeGreaterThanOrEqual(124);
+    expect(k("int2_tok", "drift")).toBeGreaterThan(0.2);
+    expect(k("int2_tok", "agree")).toBeLessThan(110);
+    // "the two layouts give about the same drift"
+    expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeGreaterThan(
+      0.8,
+    );
+    expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeLessThan(1.25);
+    // "4 + 16/8 = 6", "4 + 8/16 = 4.5"; "lands near INT4 per token"
+    expect(k("int4_tok", "bits")).toBe(6);
+    expect(k("fp4_16", "bits")).toBe(4.5);
+    expect(k("fp4_16", "drift") / k("int4_tok", "drift")).toBeLessThan(1.5);
+  });
+  it("chapter 10", () => {
+    // "more than a hundred FP32 multiply-adds"; "15.5 times more"
+    expect(n("hz.dram32.pj") / n("dot.pj_fp32")).toBeGreaterThan(100);
+    expect(n("hz.mul32.pj") / n("hz.mul8.pj")).toBeCloseTo(15.5, 10);
+    expect(n("dot.n")).toBe(32);
+  });
+});
+
 describe("formatting", () => {
   it("prints exact values, powers of two and scientific notation", () => {
     expect(exact(448)).toBe("448");

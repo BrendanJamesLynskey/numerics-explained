@@ -69,6 +69,49 @@ const SHOTS: Shot[] = [
     step: 14,
   },
   { name: "10-formats-table", path: "/formats" },
+  {
+    name: "11-outliers",
+    path: "/learn/06-outliers",
+    widget: "outlier-widget",
+    step: 19,
+  },
+  {
+    name: "12-smoothquant",
+    path: "/learn/06-outliers",
+    widget: "smooth-widget",
+    step: 4,
+  },
+  { name: "13-gptq", path: "/learn/07-gptq", widget: "gptq-widget", step: 9 },
+  {
+    name: "14-nf4",
+    path: "/learn/08-awq-and-nf4",
+    widget: "nf4-widget",
+    step: 18,
+  },
+  {
+    name: "15-awq",
+    path: "/learn/08-awq-and-nf4",
+    widget: "awq-widget",
+    step: 3,
+  },
+  {
+    name: "16-tiny-weights",
+    path: "/learn/08-awq-and-nf4",
+    widget: "tiny-weights-widget",
+    step: 24,
+  },
+  {
+    name: "17-kv-cache",
+    path: "/learn/09-kv-cache",
+    widget: "tiny-kv-widget",
+    step: 24,
+  },
+  {
+    name: "18-dot-product",
+    path: "/learn/10-hardware",
+    widget: "dot-widget",
+    step: 31,
+  },
 ];
 
 async function main(): Promise<void> {

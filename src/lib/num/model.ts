@@ -995,6 +995,7 @@ export function awqSearch(
 ): {
   results: { k: number; alpha: number; err: number; scales: number[] }[];
   best: number;
+  meanAbs: number[];
 } {
   const rows = W.length;
   const d = X.length;
@@ -1027,7 +1028,7 @@ export function awqSearch(
   }
   let best = results[0]!;
   for (const r of results) if (r.err < best.err) best = r;
-  return { results, best: best.k };
+  return { results, best: best.k, meanAbs };
 }
 
 /** SmoothQuant migration with alpha = k8/8 (reference: smoothquant). */
@@ -1439,4 +1440,478 @@ export function probeSteps(lo = -26, hi = 18): ProbeStep[] {
     out.push({ k, x, formats: row });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Chapter 6: activation outliers, LLM.int8() and SmoothQuant
+// ---------------------------------------------------------------------------
+
+export const OUTLIER_CHANNELS: readonly number[] = data.outlierChannels;
+export const LLM_INT8_THRESHOLD: number = data.llmInt8Threshold;
+
+/** A layer whose input has systematic outlier channels (reference: demo_outlier_layer). */
+export function demoOutlierLayer(
+  rows: number,
+  d: number,
+  n: number,
+  seed: number,
+  gain = 20,
+): { W: Mat; X: Mat } {
+  const rng = new Rng(seed);
+  const W = Array.from({ length: rows }, () =>
+    Array.from({ length: d }, () => roundTo(0.1 * rng.normal(), "fp16")),
+  );
+  const X = zeros(d, n);
+  for (let i = 0; i < d; i++) {
+    const g = 0.4 + 0.6 * rng.uniform();
+    const sign = rng.u32() % 2 !== 0 ? 1 : -1;
+    for (let k = 0; k < n; k++) {
+      const z = rng.normal();
+      X[i]![k] = OUTLIER_CHANNELS.includes(i)
+        ? roundTo(sign * gain * (1 + 0.15 * z), "fp16")
+        : roundTo(g * z, "fp16");
+    }
+  }
+  return { W, X };
+}
+
+/** Mean squared difference of two outputs. */
+export function outError(Y: Mat, Yq: Mat): number {
+  const rows = Y.length;
+  const n = Y[0]!.length;
+  let err = 0;
+  for (let r = 0; r < rows; r++)
+    for (let k = 0; k < n; k++) {
+      const dd = Y[r]![k]! - Yq[r]![k]!;
+      err += dd * dd;
+    }
+  return err / (rows * n);
+}
+
+/** W X over some input channels in vector-wise INT8 (reference: int8_vectorwise). */
+export function int8Vectorwise(W: Mat, X: Mat, channels: number[]): Mat {
+  const rows = W.length;
+  const n = X[0]!.length;
+  const pw = W.map((row) =>
+    intParams(
+      channels.map((i) => row[i]!),
+      8,
+      "sym",
+    ),
+  );
+  const px = Array.from({ length: n }, (_, k) =>
+    intParams(
+      channels.map((i) => X[i]![k]!),
+      8,
+      "sym",
+    ),
+  );
+  const qw = W.map((row, r) => channels.map((i) => quantInt(row[i]!, pw[r]!)));
+  const qx = Array.from({ length: n }, (_, k) =>
+    channels.map((i) => quantInt(X[i]![k]!, px[k]!)),
+  );
+  const Y = zeros(rows, n);
+  for (let r = 0; r < rows; r++)
+    for (let k = 0; k < n; k++) {
+      let acc = 0;
+      for (let c = 0; c < channels.length; c++) acc += qw[r]![c]! * qx[k]![c]!;
+      Y[r]![k] = acc * (pw[r]!.scale * px[k]!.scale);
+    }
+  return Y;
+}
+
+/** LLM.int8()'s mixed-precision decomposition (reference: llm_int8). */
+export function llmInt8(
+  W: Mat,
+  X: Mat,
+  threshold = LLM_INT8_THRESHOLD,
+): { outliers: number[]; Y: Mat } {
+  const d = X.length;
+  const n = X[0]!.length;
+  const rows = W.length;
+  const outl: number[] = [];
+  for (let i = 0; i < d; i++)
+    for (let k = 0; k < n; k++)
+      if (Math.abs(X[i]![k]!) > threshold) {
+        outl.push(i);
+        break;
+      }
+  const normal = Array.from({ length: d }, (_, i) => i).filter(
+    (i) => !outl.includes(i),
+  );
+  const Y8 = int8Vectorwise(W, X, normal);
+  const Y = zeros(rows, n);
+  for (let r = 0; r < rows; r++)
+    for (let k = 0; k < n; k++) {
+      let s = 0;
+      for (const i of outl) s += W[r]![i]! * X[i]![k]!;
+      Y[r]![k] = s + Y8[r]![k]!;
+    }
+  return { outliers: outl, Y };
+}
+
+/** Per-tensor INT8 of X: its scale and the codes some channels reach. */
+export function tensorLevels(
+  X: Mat,
+  channels: number[],
+): { scale: number; top: number; levels: number } {
+  const p = quantiseMatrix(X, 8, "sym", "tensor").params[0]!;
+  let mx = 0;
+  for (const i of channels)
+    for (const v of X[i]!) if (Math.abs(v) > mx) mx = Math.abs(v);
+  const top = rneInt(mx / p.scale);
+  return { scale: p.scale, top, levels: 2 * top + 1 };
+}
+
+export type OutlierStep = {
+  phase: "acts" | "tensor" | "vector" | "scan" | "mixed";
+  i: number;
+  found: number[];
+};
+
+export type OutlierRun = {
+  amax: number[];
+  outliers: number[];
+  tensor_scale: number;
+  normal_levels: number;
+  err_tensor: number;
+  err_vector: number;
+  err_mixed: number;
+  signal: number;
+  steps: OutlierStep[];
+};
+
+/** Chapter 6: per tensor, vector-wise, the outlier scan and the decomposition. */
+export function outlierSteps(W: Mat, X: Mat): OutlierRun {
+  const d = X.length;
+  const Y = matmulWX(W, X);
+  const amax = X.map((row) => {
+    let a = 0;
+    for (const v of row) if (Math.abs(v) > a) a = Math.abs(v);
+    return a;
+  });
+  const r = llmInt8(W, X);
+  const all = Array.from({ length: d }, (_, i) => i);
+  const normal = all.filter((i) => !r.outliers.includes(i));
+  const tl = tensorLevels(X, normal);
+  const steps: OutlierStep[] = [
+    { phase: "acts", i: -1, found: [] },
+    { phase: "tensor", i: -1, found: [] },
+    { phase: "vector", i: -1, found: [] },
+  ];
+  const found: number[] = [];
+  for (let i = 0; i < d; i++) {
+    if (amax[i]! > LLM_INT8_THRESHOLD) found.push(i);
+    steps.push({ phase: "scan", i, found: found.slice() });
+  }
+  steps.push({ phase: "mixed", i: -1, found: found.slice() });
+  return {
+    amax,
+    outliers: r.outliers,
+    tensor_scale: tl.scale,
+    normal_levels: tl.levels,
+    err_tensor: w8a8Error(W, X).err,
+    err_vector: outError(Y, int8Vectorwise(W, X, all)),
+    err_mixed: outError(Y, r.Y),
+    signal: outError(
+      Y,
+      Y.map((row) => row.map(() => 0)),
+    ),
+    steps,
+  };
+}
+
+export type SmoothStep = {
+  k: number;
+  alpha: number;
+  s: number[];
+  xmax: number[];
+  wmax: number[];
+  err: number;
+};
+
+/** Chapter 6: SmoothQuant's alpha swept from 0 to 1 (reference: smooth_steps). */
+export function smoothSteps(W: Mat, X: Mat): SmoothStep[] {
+  const Y = matmulWX(W, X);
+  const out: SmoothStep[] = [];
+  for (let k8 = 0; k8 < 9; k8++) {
+    const sq = smoothquant(W, X, k8);
+    const xm = sq.Xs.map((row) => {
+      let a = 0;
+      for (const v of row) if (Math.abs(v) > a) a = Math.abs(v);
+      return a;
+    });
+    const wm = sq.s.map((_, j) => {
+      let b = 0;
+      for (const row of sq.Ws) if (Math.abs(row[j]!) > b) b = Math.abs(row[j]!);
+      return b;
+    });
+    const Wq = quantiseMatrix(sq.Ws, 8, "sym", "tensor").deq;
+    const Xq = quantiseMatrix(sq.Xs, 8, "sym", "tensor").deq;
+    out.push({
+      k: k8,
+      alpha: k8 / 8,
+      s: sq.s,
+      xmax: xm,
+      wmax: wm,
+      err: outError(Y, matmulWX(Wq, Xq)),
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Chapter 7: GPTQ column by column
+// ---------------------------------------------------------------------------
+
+export type GptqFrame = {
+  col: number;
+  q: number[];
+  err: number[];
+  delta: Mat;
+  err_gptq: number;
+  err_rtn: number;
+};
+
+/** Chapter 7: each column quantised and its error pushed right (reference: gptq_steps). */
+export function gptqSteps(
+  W: Mat,
+  X: Mat,
+  bits: number,
+): { Q: Mat; rtn: Mat; scales: number[]; steps: GptqFrame[] } {
+  const g = gptq(W, X, bits);
+  const Wr = rtn(W, bits);
+  const rows = W.length;
+  const d = W[0]!.length;
+  let prev = W.map((r) => r.slice());
+  const steps: GptqFrame[] = [
+    {
+      col: -1,
+      q: [],
+      err: [],
+      delta: zeros(rows, d),
+      err_gptq: 0,
+      err_rtn: 0,
+    },
+  ];
+  g.steps.forEach((st, j) => {
+    const P = Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: d }, (_, c) =>
+        c <= j ? g.Q[r]![c]! : st.w[r]![c]!,
+      ),
+    );
+    const R = Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: d }, (_, c) => (c <= j ? Wr[r]![c]! : W[r]![c]!)),
+    );
+    const before = prev;
+    const delta = Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: d }, (_, c) => st.w[r]![c]! - before[r]![c]!),
+    );
+    prev = st.w;
+    steps.push({
+      col: j,
+      q: st.q,
+      err: st.err,
+      delta,
+      err_gptq: layerError(W, P, X),
+      err_rtn: layerError(W, R, X),
+    });
+  });
+  return { Q: g.Q, rtn: Wr, scales: g.scales, steps };
+}
+
+// ---------------------------------------------------------------------------
+// Chapter 8: deriving NF4, and NF4 against INT4 on normal data
+// ---------------------------------------------------------------------------
+
+export const NF4_OFFSET: number = data.nf4Offset;
+
+/** The standard normal CDF by its power series (reference: norm_cdf). */
+export function normCdf(x: number): number {
+  if (x < 0) return 1 - normCdf(-x);
+  let term = x;
+  let s = x;
+  let n = 0;
+  for (;;) {
+    term = (term * x * x) / (2 * n + 3);
+    n += 1;
+    if (s + term === s) break;
+    s += term;
+  }
+  return 0.5 + (Math.exp((-x * x) / 2) / Math.sqrt(2 * Math.PI)) * s;
+}
+
+/** The normal quantile function by bisection (reference: norm_ppf). */
+export function normPpf(p: number): number {
+  let lo = -8;
+  let hi = 8;
+  for (;;) {
+    const mid = (lo + hi) / 2;
+    if (mid === lo || mid === hi) return mid;
+    if (normCdf(mid) < p) lo = mid;
+    else hi = mid;
+  }
+}
+
+export type Nf4Step = {
+  phase: "pdf" | "pos" | "neg" | "zero" | "normalise" | "compare";
+  n: number;
+};
+
+export type Nf4Build = {
+  pos: { p: number; z: number }[];
+  neg: { p: number; z: number }[];
+  raw: number[];
+  max: number;
+  values: number[];
+  max_diff: number;
+  steps: Nf4Step[];
+};
+
+/** bitsandbytes' create_normal_map in doubles, step by step (reference: nf4_build). */
+export function nf4Build(): Nf4Build {
+  const pos = Array.from({ length: 8 }, (_, i) => {
+    const p = NF4_OFFSET + ((0.5 - NF4_OFFSET) * i) / 8;
+    return { p, z: normPpf(p) };
+  });
+  const neg = Array.from({ length: 7 }, (_, i) => {
+    const p = NF4_OFFSET + ((0.5 - NF4_OFFSET) * i) / 7;
+    return { p: 1 - p, z: -normPpf(p) };
+  });
+  const raw = [...pos.map((q) => q.z), 0, ...neg.map((q) => q.z)].sort(
+    (a, b) => a - b,
+  );
+  const mx = raw[raw.length - 1]!;
+  const values = raw.map((v) => v / mx);
+  let diff = 0;
+  values.forEach((a, i) => {
+    if (Math.abs(a - NF4[i]!) > diff) diff = Math.abs(a - NF4[i]!);
+  });
+  const steps: Nf4Step[] = [{ phase: "pdf", n: 0 }];
+  for (let i = 0; i < 8; i++) steps.push({ phase: "pos", n: i + 1 });
+  for (let i = 0; i < 7; i++) steps.push({ phase: "neg", n: i + 1 });
+  steps.push({ phase: "zero", n: 16 });
+  steps.push({ phase: "normalise", n: 16 });
+  steps.push({ phase: "compare", n: 16 });
+  return { pos, neg, raw, max: mx, values, max_diff: diff, steps };
+}
+
+/** n approximately normal FP16 values (reference: demo_normal). */
+export function demoNormal(n: number, seed: number): number[] {
+  const rng = new Rng(seed);
+  return Array.from({ length: n }, () => roundTo(rng.normal(), "fp16"));
+}
+
+/** Blockwise NF4 against blockwise INT4 (reference: nf4_vs_int4). */
+export function nf4VsInt4(
+  xs: readonly number[],
+  block = 64,
+): { mse_nf4: number; mse_int4: number; signal: number } {
+  const nf = nf4Quantise(xs, block).values;
+  const i4: number[] = [];
+  for (let b0 = 0; b0 < xs.length; b0 += block) {
+    const blk = xs.slice(b0, b0 + block);
+    const p = intParams(blk, 4, "sym");
+    for (const x of blk) i4.push(dequantInt(quantInt(x, p), p));
+  }
+  let eNf = 0;
+  let eI4 = 0;
+  let sig = 0;
+  xs.forEach((x, i) => {
+    eNf += (x - nf[i]!) * (x - nf[i]!);
+    eI4 += (x - i4[i]!) * (x - i4[i]!);
+    sig += x * x;
+  });
+  const n = xs.length;
+  return { mse_nf4: eNf / n, mse_int4: eI4 / n, signal: sig / n };
+}
+
+// ---------------------------------------------------------------------------
+// Chapter 10: one dot product in four number systems, and its energy
+// ---------------------------------------------------------------------------
+
+export type HorowitzRow = {
+  id: string;
+  label: string;
+  pj: number;
+  um2: number | null;
+};
+
+/** Energy and area per operation at 45 nm (Horowitz, ISSCC 2014). */
+export const HOROWITZ: readonly HorowitzRow[] = data.horowitz;
+const HZ = Object.fromEntries(HOROWITZ.map((h) => [h.id, h]));
+
+export type MacKind = "fp32" | "fp16" | "int8";
+export const DOT_MAC = data.dotMac as Record<MacKind, [string, string]>;
+
+/** Energy of one multiply-accumulate (pJ) from the table. */
+export function macPj(kind: MacKind): number {
+  const [m, a] = DOT_MAC[kind];
+  return HZ[m]!.pj + HZ[a]!.pj;
+}
+
+export type DotStep = {
+  i: number;
+  ref: number;
+  fp32: number;
+  fp16: number;
+  int8_acc: number;
+  int8: number;
+  mx_acc: number;
+  mx: number;
+  q8: [number, number];
+  e2m1: [number, number];
+};
+
+export type DotRun = {
+  scales: { int8: [number, number]; mx: [number, number] };
+  pj: Record<MacKind, number>;
+  steps: DotStep[];
+};
+
+/** Chapter 10: a dot product in FP32, FP16, INT8 and MXFP4 (reference: dot_steps). */
+export function dotSteps(a: readonly number[], b: readonly number[]): DotRun {
+  const pa = intParams(a, 8, "sym");
+  const pb = intParams(b, 8, "sym");
+  const ma = mxQuantise(a, "mxfp4");
+  const mb = mxQuantise(b, "mxfp4");
+  const ea = pow2(ma.shared_exp);
+  const eb = pow2(mb.shared_exp);
+  let ref = 0;
+  let s32 = 0;
+  let s16 = 0;
+  let acc8 = 0;
+  let accmx = 0;
+  const steps: DotStep[] = [];
+  for (let i = 0; i < a.length; i++) {
+    ref += a[i]! * b[i]!;
+    s32 = roundTo(s32 + roundTo(a[i]! * b[i]!, "fp32"), "fp32");
+    s16 = roundTo(s16 + roundTo(a[i]! * b[i]!, "fp16"), "fp16");
+    const qa = quantInt(a[i]!, pa);
+    const qb = quantInt(b[i]!, pb);
+    acc8 += qa * qb;
+    const xa = ma.values[i]! / ea;
+    const xb = mb.values[i]! / eb;
+    accmx += xa * xb;
+    steps.push({
+      i,
+      ref,
+      fp32: s32,
+      fp16: s16,
+      int8_acc: acc8,
+      int8: acc8 * (pa.scale * pb.scale),
+      mx_acc: accmx,
+      mx: accmx * (ea * eb),
+      q8: [qa, qb],
+      e2m1: [xa, xb],
+    });
+  }
+  return {
+    scales: {
+      int8: [pa.scale, pb.scale],
+      mx: [ma.shared_exp, mb.shared_exp],
+    },
+    pj: { fp32: macPj("fp32"), fp16: macPj("fp16"), int8: macPj("int8") },
+    steps,
+  };
 }

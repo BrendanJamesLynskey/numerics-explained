@@ -1,0 +1,121 @@
+{
+ "calib": [
+  "a stitch in time saves nine, and",
+  "all that glitters is not gold; s",
+  "x = (a + b) * c - d / 2; y = x %",
+  "she sells sea shells by the sea "
+ ],
+ "config": {
+  "d_ff": 32,
+  "d_model": 16,
+  "n_blocks": 2,
+  "n_heads": 2,
+  "seed": 42,
+  "seq_len": 32,
+  "vocab_size": 64
+ },
+ "kvConfigs": {
+  "fp16": {
+   "bits": 16.0,
+   "label": "FP16"
+  },
+  "fp4_16": {
+   "bits": 4.5,
+   "label": "FP4 E2M1, E4M3 scale per 16"
+  },
+  "fp8": {
+   "bits": 8.0,
+   "label": "FP8 E4M3, one scale per tensor"
+  },
+  "int2_kivi": {
+   "bits": 4.0,
+   "label": "INT2: K per channel, V per token"
+  },
+  "int2_tok": {
+   "bits": 4.0,
+   "label": "INT2 per token"
+  },
+  "int4_kivi": {
+   "bits": 6.0,
+   "label": "INT4: K per channel, V per token"
+  },
+  "int4_tok": {
+   "bits": 6.0,
+   "label": "INT4 per token"
+  },
+  "int8_tok": {
+   "bits": 10.0,
+   "label": "INT8 per token"
+  }
+ },
+ "kvOrder": [
+  "fp16",
+  "fp8",
+  "int8_tok",
+  "fp4_16",
+  "int4_tok",
+  "int4_kivi",
+  "int2_tok",
+  "int2_kivi"
+ ],
+ "prompts": [
+  "the quick brown fox jumps over t",
+  "to be, or not to be: that is the",
+  "numbers: 3.14159, 2.71828 and 1.",
+  "quantise the weights, then the k"
+ ],
+ "weightConfigs": {
+  "fp8_ch": {
+   "bits": 9.0,
+   "label": "FP8 E4M3 per channel"
+  },
+  "gptq3_ch": {
+   "bits": 4.0,
+   "label": "GPTQ INT3 per channel"
+  },
+  "int3_ch": {
+   "bits": 4.0,
+   "label": "INT3 per channel"
+  },
+  "int3_g8": {
+   "bits": 5.0,
+   "label": "INT3 groups of 8"
+  },
+  "int4_b64": {
+   "bits": 4.25,
+   "label": "INT4 blocks of 64"
+  },
+  "int4_ch": {
+   "bits": 5.0,
+   "label": "INT4 per channel"
+  },
+  "int4_g8": {
+   "bits": 6.0,
+   "label": "INT4 groups of 8"
+  },
+  "int8_ch": {
+   "bits": 9.0,
+   "label": "INT8 per channel"
+  },
+  "mxfp4": {
+   "bits": 4.25,
+   "label": "MXFP4 blocks of 32"
+  },
+  "nf4": {
+   "bits": 4.25,
+   "label": "NF4 blocks of 64"
+  }
+ },
+ "weightOrder": [
+  "int8_ch",
+  "fp8_ch",
+  "int4_ch",
+  "int4_g8",
+  "int4_b64",
+  "nf4",
+  "mxfp4",
+  "int3_ch",
+  "int3_g8",
+  "gptq3_ch"
+ ]
+}

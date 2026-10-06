@@ -35,7 +35,15 @@ import {
   type SumStep,
   type ZoomStep,
   type ZpStep,
+  LLM_INT8_THRESHOLD,
+  NF4_OFFSET,
+  type DotRun,
+  type GptqFrame,
+  type Nf4Build,
+  type OutlierRun,
+  type SmoothStep,
 } from "./model";
+import { tokenLabel, type TinyStep } from "./tiny";
 
 const name = (f: FormatId) => FORMATS[f].name;
 
@@ -199,4 +207,126 @@ export function zpCaption(
     return `INT${bits} absmax: scale ${trim(sym.scale, 4)}, codes ${minus(String(sym.lo))} … ${sym.hi}, symmetric about 0, so the negative half is nearly empty. Zero-point: scale ${trim(asym.scale, 4)}, zero point ${asym.zero}, codes 0 … ${asym.hi} spread over the actual range.`;
   const x = xs[s.i]!;
   return `Value ${s.i + 1} of ${xs.length}: ${trim(x, 4)} → absmax code ${minus(String(s.q_sym))} (${trim(s.v_sym!, 4)}), zero-point code ${s.q_asym} (${trim(s.v_asym!, 4)}). Mean squared error so far: ${trim(s.mse_sym!, 3)} vs ${trim(s.mse_asym!, 3)}.`;
+}
+
+/** Chapter 6: one step of the outlier story. */
+export function outlierCaption(
+  r: OutlierRun,
+  i: number,
+  tokens: number,
+): string {
+  const s = r.steps[i]!;
+  const d = r.amax.length;
+  const big = r.outliers
+    .map((c) => `${c} (${trim(r.amax[c]!, 3)})`)
+    .join(" and ");
+  let small = 0;
+  r.amax.forEach((a, c) => {
+    if (!r.outliers.includes(c) && a > small) small = a;
+  });
+  if (s.phase === "acts")
+    return `${d} input channels × ${tokens} tokens. The largest values sit in channels ${big}, in every token; no other channel exceeds ${trim(small, 3)}.`;
+  if (s.phase === "tensor")
+    return `Per-tensor INT8: one scale, ${trim(r.tensor_scale, 4)}, set by the outliers. The ordinary channels, all below ${LLM_INT8_TEXT}, reach only ${r.normal_levels} of the 255 codes. Output error ${trim(r.err_tensor, 3)}.`;
+  if (s.phase === "vector")
+    return `Vector-wise INT8: a scale per token and per output channel. No help: every token contains the outliers, so every token's scale is set by them. Output error ${trim(r.err_vector, 3)}.`;
+  if (s.phase === "scan") {
+    const hit = s.found.includes(s.i);
+    return `Channel ${s.i}: largest magnitude ${trim(r.amax[s.i]!, 3)} ${hit ? `> ${LLM_INT8_TEXT}: an outlier channel, kept in 16-bit` : `≤ ${LLM_INT8_TEXT}: INT8`}. Found so far: ${s.found.length === 0 ? "none" : s.found.join(", ")}.`;
+  }
+  return `LLM.int8(): channels ${s.found.join(" and ")} (${s.found.length} of ${d}) multiply in 16-bit, the other ${d - s.found.length} in vector-wise INT8, and the two parts are added. Output error ${trim(r.err_mixed, 3)}, ${trim(r.err_vector / r.err_mixed, 3)}× smaller than vector-wise INT8 alone.`;
+}
+
+const LLM_INT8_TEXT = trim(LLM_INT8_THRESHOLD);
+
+/** Chapter 6: SmoothQuant at one alpha. */
+export function smoothCaption(s: SmoothStep, base: number): string {
+  const xm = Math.max(...s.xmax);
+  const wm = Math.max(...s.wmax);
+  const what =
+    s.k === 0
+      ? "all the difficulty stays in the activations"
+      : s.k === 8
+        ? "all of it moves into the weights"
+        : s.k === 4
+          ? "the activations' and weights' channel maxima are equal (SmoothQuant's default)"
+          : s.k < 4
+            ? "most of it stays in the activations"
+            : "most of it moves into the weights";
+  return `α = ${trim(s.alpha, 3)}: ${what}. Largest activation channel ${trim(xm, 3)}, largest weight column ${trim(wm, 3)}; per-tensor W8A8 output error ${trim(s.err, 3)} (${trim(base / s.err, 3)}× smaller than without smoothing).`;
+}
+
+/** Chapter 7: GPTQ after column j. */
+export function gptqCaption(f: GptqFrame, bits: number, d: number): string {
+  if (f.col < 0)
+    return `A ${f.delta.length} × ${d} weight matrix and its calibration inputs. GPTQ quantises it to INT${bits} one column (input) at a time, left to right.`;
+  let moved = 0;
+  for (const row of f.delta) for (const v of row) if (v !== 0) moved += 1;
+  const tail =
+    f.col === d - 1
+      ? `Done: layer error ${trim(f.err_gptq, 3)} against ${trim(f.err_rtn, 3)} for plain rounding, ${trim(f.err_rtn / f.err_gptq, 3)}× smaller.`
+      : `Layer error so far: GPTQ ${trim(f.err_gptq, 3)}, plain rounding ${trim(f.err_rtn, 3)}.`;
+  return `Column ${f.col}: rounded to INT${bits}; its error, weighted by the inverse Hessian, nudges ${moved} weights in the ${d - 1 - f.col} columns to its right. ${tail}`;
+}
+
+/** Chapter 8: AWQ at one alpha. */
+export function awqCaption(
+  r: { k: number; alpha: number; err: number },
+  best: number,
+  base: number,
+  bits: number,
+): string {
+  const tag = r.k === 0 ? " (no scaling: plain group-wise rounding)" : "";
+  const b =
+    r.k === best
+      ? ` The best α on this layer: ${trim(base / r.err, 3)}× less error than none.`
+      : "";
+  return `α = ${trim(r.alpha, 3)}${tag}: input channel i is scaled by mean|xᵢ|^α before INT${bits} rounding in groups of 8, and the activations by its inverse. Output error ${trim(r.err, 3)}.${b}`;
+}
+
+/** Chapter 8: one step of NF4's construction. */
+export function nf4Caption(b: Nf4Build, i: number): string {
+  const s = b.steps[i]!;
+  if (s.phase === "pdf")
+    return `The standard normal distribution: QLoRA assumes a block of weights, divided by its absmax, looks like a scaled sample of it.`;
+  if (s.phase === "pos") {
+    const q = b.pos[s.n - 1]!;
+    return `Positive value ${s.n} of 8: the quantile at p = ${trim(q.p, 5)} is z = ${trim(q.z, 5)}. The probabilities are evenly spaced from ${trim(NF4_OFFSET_TEXT, 7)} down to 0.5, so each bin holds the same share of a normal sample.`;
+  }
+  if (s.phase === "neg") {
+    const q = b.neg[s.n - 1]!;
+    return `Negative value ${s.n} of 7: z = ${trim(q.z, 5)} (p = ${trim(q.p, 5)}). One fewer on this side: 16 codes = 8 positive + 7 negative + zero.`;
+  }
+  if (s.phase === "zero")
+    return `Zero is added as a value of its own, so zeros (padding, pruned weights) quantise exactly.`;
+  if (s.phase === "normalise")
+    return `Divide by the largest, ${trim(b.max, 5)}, so the code book spans −${trim(-b.raw[0]! / b.max, 4)} … 1, the range of absmax-scaled weights.`;
+  return `The result matches bitsandbytes' NF4 table to ${sci(b.max_diff, 2)} (its table was built in 32-bit floats).`;
+}
+
+const NF4_OFFSET_TEXT = NF4_OFFSET;
+
+/** Chapters 8 and 9: one position of the tiny model. */
+export function tinyCaption(s: TinyStep, n: number, label: string): string {
+  const ref = tokenLabel(s.top_ref);
+  const q = tokenLabel(s.top_q);
+  const verdict = s.agree
+    ? `both predict “${ref}”`
+    : `the reference predicts “${ref}”, the quantised model “${q}”`;
+  return `Position ${s.t + 1} of ${n}, after “${tokenLabel(s.token)}”: ${verdict}. RMS logit change ${trim(s.rms, 3)}. ${label}: ${s.agreed} of ${s.t + 1} predictions agree so far.`;
+}
+
+/** Chapter 10: the dot product after i + 1 products. */
+export function dotCaption(r: DotRun, i: number): string {
+  const s = r.steps[i]!;
+  const n = r.steps.length;
+  const rel = (v: number) => pctOrSci(Math.abs(v - s.ref) / Math.abs(s.ref));
+  const head = `Product ${i + 1} of ${n}: exact running sum ${trim(s.ref, 6)}.`;
+  const body = `FP32 ${trim(s.fp32, 7)} (${rel(s.fp32)} off), FP16 ${trim(s.fp16, 5)} (${rel(s.fp16)}), INT8 ${trim(s.int8, 5)} (${rel(s.int8)}), MXFP4 ${trim(s.mx, 4)} (${rel(s.mx)}).`;
+  const energy = `Energy so far: FP32 ${trim((i + 1) * r.pj.fp32, 4)} pJ, FP16 ${trim((i + 1) * r.pj.fp16, 4)} pJ, INT8 ${trim((i + 1) * r.pj.int8, 4)} pJ.`;
+  const last =
+    i === n - 1
+      ? ` The integer sum ${int(s.int8_acc)} is scaled once by the two INT8 scales; the MXFP4 sum ${trim(s.mx_acc, 4)} by 2${sup(r.scales.mx[0] + r.scales.mx[1])}, an exponent add.`
+      : "";
+  return `${head} ${body} ${energy}${last}`;
 }

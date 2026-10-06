@@ -55,3 +55,31 @@ export const ZeroPointWidget = dynamic(() => import("./ZeroPointWidget"), {
   ssr: false,
   loading: loading("animation"),
 });
+export const OutlierWidget = dynamic(() => import("./OutlierWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const SmoothWidget = dynamic(() => import("./SmoothWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const GptqWidget = dynamic(() => import("./GptqWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const AwqWidget = dynamic(() => import("./AwqWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const Nf4Widget = dynamic(() => import("./Nf4Widget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const TinyWidget = dynamic(() => import("./TinyWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
+export const DotWidget = dynamic(() => import("./DotWidget"), {
+  ssr: false,
+  loading: loading("animation"),
+});
