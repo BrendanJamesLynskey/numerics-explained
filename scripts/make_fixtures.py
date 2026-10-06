@@ -275,13 +275,51 @@ TARGETS = {
 }
 
 
+def close(a, b, rel: float = 1e-12) -> bool:
+    """Structural equality, floats to a relative tolerance (ints, strings and bools exactly)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if isinstance(a, float) or isinstance(b, float):
+        if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+            return False
+        return abs(a - b) <= rel * max(1.0, abs(a), abs(b))
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(close(a[k], b[k], rel) for k in a)
+    if isinstance(a, list):
+        return isinstance(b, list) and len(a) == len(b) and all(close(x, y, rel) for x, y in zip(a, b))
+    return a == b
+
+
+# Results that pass through exp, log, sin, cos or tanh, whose last bit depends
+# on the platform's maths library: --check compares them to a relative 1e-12.
+TOLERANT = {"tiny_fixtures.json": None, "num_fixtures.json": "nf4Build"}
+
+
+def up_to_date(path: Path, text: str) -> bool:
+    if not path.exists():
+        return False
+    old = path.read_text()
+    if old == text:
+        return True
+    if path.name not in TOLERANT:
+        return False
+    a = json.loads(old)
+    b = json.loads(text)
+    key = TOLERANT[path.name]
+    if key is None:
+        return close(a, b)
+    rest_a = {k: v for k, v in a.items() if k != key}
+    rest_b = {k: v for k, v in b.items() if k != key}
+    return rest_a == rest_b and close(a.get(key), b.get(key))
+
+
 def main() -> int:
     check = "--check" in sys.argv
     stale = []
     for path, (fn, indent) in TARGETS.items():
         text = dump(fn(), indent)
         if check:
-            if not path.exists() or path.read_text() != text:
+            if not up_to_date(path, text):
                 stale.append(str(path.relative_to(ROOT)))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
