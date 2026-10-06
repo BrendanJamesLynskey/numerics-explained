@@ -1,0 +1,90 @@
+<GranularityWidget>
+  <Eq
+    label="Absmax quantisation: the scale of group g is its largest magnitude over two to the b minus one, minus one; a weight is stored as a clamped, rounded integer and read back as the integer times the scale"
+    tex="\begin{gathered} \htmlClass{hl-scale}{s_{\htmlClass{hl-group}{g}}} = \frac{\max_{i \in \htmlClass{hl-group}{g}} |w_i|}{2^{b-1} - 1} \\ \hat w_i = \htmlClass{hl-scale}{s_{\htmlClass{hl-group}{g}}} \cdot \mathrm{clamp}\Bigl(\mathrm{round}\bigl(w_i / s_{g}\bigr)\Bigr) \end{gathered}"
+  />
+</GranularityWidget>
+
+<Layer kind="concept">
+
+A floating-point format spends some of its bits on an exponent so that every value carries its own scale. **Integer quantisation** takes the opposite route: store each weight as a small integer, $-7$ to $7$ for INT4, and keep **one scale for a whole group** of weights. The integer grid is uniform, so it wastes nothing on range it does not need, but its step is set by the largest value in the group.
+
+The simplest choice is **absmax**: the scale is the group's largest magnitude divided by $2^{b-1} - 1$, so the largest weight lands exactly on the top code, zero is exactly representable, and everything else is rounded to the nearest step. The question is how big a group shares a scale.
+
+The animation quantises one weight matrix (16 output channels by 64 inputs, illustrative) to INT4 five times:
+
+- **Per tensor**, one scale for everything: the rows with small weights get a step sized for the largest weight in the matrix, and most of their weights round to a handful of codes. SQNR (signal to quantisation noise) is <V of="gran.4.sym.0.sqnr" fmt="db" />.
+- **Per channel**, one scale per output row: each row gets a step that fits it. <V of="gran.4.sym.1.sqnr" fmt="db" />.
+- **Per group** of 32, 16 and 8 weights along each row: a few input columns in this matrix are larger in every row, and a group that contains one pays for it; smaller groups confine the damage. <V of="gran.4.sym.2.sqnr" fmt="db" />, <V of="gran.4.sym.3.sqnr" fmt="db" /> and <V of="gran.4.sym.4.sqnr" fmt="db" />.
+
+The scales are not free. Stored in FP16, they add 16 bits per group: <V of="gran.4.sym.1.bits_per_weight" fmt="num" /> bits per weight per channel, <V of="gran.4.sym.2.bits_per_weight" fmt="num" /> with groups of 32, <V of="gran.4.sym.4.bits_per_weight" fmt="num" /> with groups of 8. LLM weight quantisers commonly settle on groups of 64 or 128, where the overhead is an eighth or a quarter of a bit. Watch the error map fade as the groups shrink, and try INT3, where every bit of SQNR is precious.
+
+</Layer>
+
+<ZeroPointWidget>
+  <Eq
+    label="Zero-point quantisation: the scale spreads the range from min to max over two to the b minus one steps; the zero point is the code for zero"
+    tex="\begin{gathered} \htmlClass{hl-scale}{s} = \frac{x_{\max} - x_{\min}}{2^{b} - 1}, \qquad \htmlClass{hl-zero}{z} = \mathrm{round}\Bigl(-\frac{x_{\min}}{s}\Bigr) \\ \htmlClass{hl-q}{q} = \mathrm{clamp}\bigl(\mathrm{round}(x / s) + \htmlClass{hl-zero}{z},\ 0,\ 2^{b} - 1\bigr) \end{gathered}"
+  />
+</ZeroPointWidget>
+
+<Layer kind="concept">
+
+Absmax is symmetric about zero. Weights usually are too, but many activations are not: after a GELU or a ReLU they are mostly positive, and a symmetric grid then spends half its codes on negative values that hardly occur. **Zero-point** (asymmetric, or affine) quantisation shifts the grid to cover the values' actual range, from the minimum to the maximum, using all $2^b$ codes; the integer $z$ that represents 0.0 is the **zero point**.
+
+In the animation, 24 skewed activations are quantised to INT4 both ways. The absmax grid has a step of <V of="zp.4.sym_scale" fmt="num" /> and runs from $-7$ to $7$ steps; the values use <V of="zp.4.used_sym" fmt="int" /> of its <V of="zp.4.levels_sym" fmt="int" /> codes; the zero-point grid (zero point <V of="zp.4.zero" fmt="int" />) uses <V of="zp.4.used_asym" fmt="int" /> of <V of="zp.4.levels_asym" fmt="int" />, with a finer step of <V of="zp.4.asym_scale" fmt="num" />, and its mean squared error is <V of="zp.4.mse_asym" fmt="num" /> against absmax's <V of="zp.4.mse_sym" fmt="num" />.
+
+The price is arithmetic: with a zero point, a dot product $\sum_i s_w (q_{w,i} - z_w)\, s_x (q_{x,i} - z_x)$ expands into the integer product plus correction terms that involve the sums of the codes. Kernels precompute those terms, but it is one reason weights are often quantised symmetrically and zero points kept for activations.
+
+</Layer>
+
+<Layer kind="maths">
+
+For uniform quantisation with step $\Delta$ and a value that is not clamped, the rounding error is at most $\Delta / 2$, and if it is spread evenly over $[-\Delta/2, \Delta/2]$ its mean square is $\Delta^2 / 12$. With absmax, $\Delta = \max|w| / (2^{b-1} - 1)$, so each extra bit halves $\Delta$ and quarters the noise: about $6.02$ dB of SQNR per bit,
+
+$$
+\mathrm{SQNR} = 10 \log_{10} \frac{\overline{w^2}}{\overline{(w - \hat w)^2}} \;\approx\; 6.02\,b + 10 \log_{10} \frac{3\,\overline{w^2}}{\max |w|^2} \quad \text{dB}.
+$$
+
+The second term is where granularity acts: a group whose maximum is far above its typical value has a small $\overline{w^2} / \max|w|^2$, a coarse step for its size, and a low SQNR. Smaller groups raise it. With scales of $16$ bits per group of $g$ weights, the cost is $b + 16/g$ bits per weight, plus the zero point's bits for asymmetric quantisation.
+
+Affine quantisation (Jacob et al.) represents a real value as $r = s\,(q - z)$ with $z$ an integer, so that $r = 0$ is exact: zero padding and ReLU outputs stay exactly zero.
+
+</Layer>
+
+<Layer kind="code">
+
+The scale and zero point of a group, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts):
+
+```ts
+const [lo, hi] = intRange(bits, false);
+const scale = mx > mn ? (mx - mn) / hi : 1;
+const zero = Math.min(hi, Math.max(lo, rneInt(-mn / scale)));
+return { scale, zero, lo, hi };
+```
+
+and the quantiser itself:
+
+```ts
+export function quantInt(x: number, p: IntParams): number {
+  const q = rneInt(x / p.scale) + p.zero;
+  return Math.min(p.hi, Math.max(p.lo, q));
+}
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The weight matrix and the activations are generated, not taken from a model: approximately normal weights with a different scale per row and four larger input columns, and skewed values shaped like a GELU's outputs. Real layers differ in detail; the ranking of the granularities is typical. The 16-bit scales and the zero point's $b$ bits are this site's accounting; formats store them in several ways.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [Why quantise](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-01) and [PTQ vs calibration-aware vs QAT](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-03).
+- Google TPU series: [INT8, where v1 started](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-06).
+- The [Hardware-Aware Quantisation](https://brendanjameslynskey.github.io/Hardware_Aware_Quantisation/) explorer.
+- Jacob et al., [Quantization and training of neural networks for efficient integer-arithmetic-only inference](https://arxiv.org/abs/1712.05877) (2017); Nagel et al., [A white paper on neural network quantization](https://arxiv.org/abs/2106.08295) (2021).
+
+</Callout>

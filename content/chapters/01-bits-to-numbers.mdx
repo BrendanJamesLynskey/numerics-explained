@@ -1,0 +1,72 @@
+<BitsWidget>
+  <Eq
+    label="A normal floating-point value is minus one to the sign, times two to the exponent field minus the bias, times one plus the mantissa field over two to the m"
+    tex="v = (-1)^{\htmlClass{hl-sign}{s}} \times 2^{\htmlClass{hl-exp}{E - \text{bias}}} \times \Bigl(1 + \htmlClass{hl-mant}{\tfrac{M}{2^{m}}}\Bigr)"
+  />
+</BitsWidget>
+
+<Layer kind="concept">
+
+A floating-point number is three fields of bits. The **sign** says which side of zero. The **exponent** says which power of two the number lies between: $2^3$ and $2^4$, say. The **mantissa** says where between them, in $2^m$ equal steps. Click the bits in the animation: an exponent bit moves the value by a power of two, a mantissa bit nudges it within its power of two.
+
+The stretch from one power of two to the next is called a **binade**. Every binade holds the same $2^m$ values, but each binade is twice as wide as the one below it, so the gap between neighbours doubles every time the exponent goes up. That is why the format is called _floating_ point: the **relative** precision is roughly constant (about $m+1$ significant bits wherever you are) while the **absolute** spacing grows with the number. Press play and the number line zooms towards zero, a power of two per step: the same number of values keeps fitting into half the width, so they crowd together.
+
+FP8 E4M3 (4 exponent bits, 3 mantissa bits) has <V of="e4m3.max_code" fmt="int" /> positive values, from <V of="e4m3.min_sub" fmt="pow2" /> up to <V of="e4m3.max" fmt="exact" />. Near 1 its neighbours are <V of="e4m3.eps" fmt="exact" /> apart; near 400 they are 32 apart.
+
+**Subnormals.** When the exponent field is all zeros, the exponent stops at its minimum and the implicit leading 1 becomes a 0. The values below the smallest normal number, <V of="e4m3.min_normal" fmt="pow2" /> for E4M3, are then evenly spaced down to zero instead of crowding further: this is IEEE 754's _gradual underflow_. The last zoom steps show it.
+
+**Infinity and NaN.** IEEE formats (FP32, FP16, BF16 and FP8 E5M2) keep the all-ones exponent for $\pm\infty$ and NaN, "not a number". FP8 E4M3 gives that binade back to ordinary numbers and keeps only S.1111.111 for NaN. The OCP FP8 specification does this "to increase emax to 8 and thus to increase the dynamic range by one binade", so the largest value is <V of="e4m3.max" fmt="exact" /> rather than 240. The MX specification's FP6 and FP4 reserve nothing: every one of their codes is a number.
+
+BF16 keeps FP32's 8-bit exponent and cuts the mantissa to 7 bits: nearly the same range as FP32 (up to about $3.4 \times 10^{38}$) with only <V of="bf16.digits" fmt="int" /> significant bits. FP16 has <V of="fp16.digits" fmt="int" /> significant bits but stops at <V of="fp16.max" fmt="exact" />. [Chapter 4](/learn/04-formats-zoo) puts them side by side; [the formats page](/formats) lists every constant.
+
+</Layer>
+
+<Layer kind="maths">
+
+For a format with $e$ exponent bits, $m$ mantissa bits and bias $b$, a code with sign $s$, exponent field $E$ and mantissa field $M$ is worth
+
+$$
+v = \begin{cases}
+(-1)^s \, 2^{E-b} \left(1 + \frac{M}{2^m}\right) & 0 < E \text{ (normal)} \\
+(-1)^s \, 2^{1-b} \, \frac{M}{2^m} & E = 0 \text{ (subnormal or zero)}
+\end{cases}
+$$
+
+with $e_{\min} = 1 - b$. In the binade $[2^k, 2^{k+1})$ the spacing is the **ulp** (unit in the last place)
+
+$$
+\operatorname{ulp}(x) = 2^{\max(k,\, e_{\min}) - m}, \qquad 2^k \le |x| < 2^{k+1},
+$$
+
+so the gap relative to the number lies between $2^{-m-1}$ and $2^{-m}$, apart from the subnormals. The largest value is $2^{e_{\max}}(2 - 2^{-m})$ for formats that keep a full top binade, and $2^{8} \times 1.75 = 448$ for E4M3, whose top code is NaN.
+
+</Layer>
+
+<Layer kind="code">
+
+Decoding, cut from the site's [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts) (the Python reference repeats it line for line, and the tests compare every code with numpy and ml_dtypes):
+
+```ts
+if (f.kind === "fn" && E === top && M === pow2(f.m) - 1) return NaN;
+let v: number;
+if (E === 0) v = pow2(f.emin - f.m) * M;
+else v = pow2(E - f.bias - f.m) * (pow2(f.m) + M);
+return s ? -v : v;
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The number line draws a tick for every value, and a solid bar where neighbouring values are less than 3 pixels apart (for 16- and 32-bit formats, almost everywhere). The positions are exact.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [Number formats, visual](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-02).
+- Google TPU series: [bfloat16, the format that won](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-07).
+- AI matrix-multiply unit deck: [Number formats, from FP32 to FP4](https://brendanjameslynskey.github.io/AI_MMUL_Unit/#s10).
+- [IEEE Std 754-2019](https://doi.org/10.1109/IEEESTD.2019.8766229), the standard for binary floating point; [the OCP 8-bit floating point specification](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1) (E4M3 and E5M2); Goldberg, [What every computer scientist should know about floating-point arithmetic](https://doi.org/10.1145/103162.103163) (1991).
+
+</Callout>

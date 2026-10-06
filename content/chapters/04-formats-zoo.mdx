@@ -1,0 +1,85 @@
+<ProbeWidget>
+  <Eq
+    label="Inside the normal range, the relative rounding error is at most two to the minus m plus one; the range runs from two to the e min up to x max"
+    tex="\left|\frac{\mathrm{fl}(x) - x}{x}\right| \le \htmlClass{hl-mant}{2^{-(m+1)}} \quad \text{for} \quad \htmlClass{hl-exp}{2^{e_{\min}} \le |x| \le x_{\max}}"
+  />
+</ProbeWidget>
+
+<Layer kind="concept">
+
+With a fixed number of bits, every format makes the same trade: exponent bits buy **range** (how many binades), mantissa bits buy **precision** (how finely each binade is divided). The animation sends one value, $\tfrac{4}{3} \times 2^k$, from far below 1 to far above it, and asks each format to store it.
+
+- In the solid part of each bar (the normal range) the relative error stays put at a level set by the mantissa: about <V of="probe.0.bf16.rel" fmt="pct" /> for BF16, <V of="probe.0.e4m3.rel" fmt="pct" /> for FP8 E4M3 and <V of="probe.0.e5m2.rel" fmt="pct" /> for E5M2 at this value.
+- In the hatched part (the subnormals) precision drains away one bit per binade, and below it the value is **flushed to zero**.
+- Above the bar the value **overflows**: to infinity for IEEE formats, to NaN for E4M3 (non-saturating), and FP4, which has neither, **saturates** at its largest value.
+
+**FP8 E4M3 against E5M2.** One more exponent bit doubles the number of binades (<V of="e5m2.binades" fmt="int" /> against <V of="e4m3.binades" fmt="int" />) and costs one mantissa bit. The FP8 formats paper's recipe uses E4M3 for weights and activations, where precision matters and the range is known, and E5M2 for gradients, whose range is wide and unpredictable.
+
+**BF16 against FP16.** BF16 is FP32 with the mantissa cut to 7 bits: with FP32's exponent it covers almost all of FP32's range, so a model trained in FP32 can switch to it without overflow or underflow, at <V of="bf16.digits" fmt="int" /> significant bits. FP16 has <V of="fp16.digits" fmt="int" /> significant bits but only <V of="fp16.binades" fmt="int" /> binades, so FP16 training scales the loss to keep small gradients from flushing to zero.
+
+</Layer>
+
+<MxWidget>
+  <Eq
+    label="The shared scale X is two to the floor of log two of the largest magnitude, minus the element's largest exponent; each element stores V over X rounded to the element type"
+    tex="\begin{gathered} \htmlClass{hl-scale}{X} = 2^{\lfloor \log_2 \htmlClass{hl-amax}{\max_i |V_i|} \rfloor - e_{\max}^{\text{elem}}} \\ P_i = \htmlClass{hl-elem}{Q\bigl(V_i / X\bigr)}, \qquad v_i = \htmlClass{hl-scale}{X}\,P_i \end{gathered}"
+  />
+</MxWidget>
+
+<Layer kind="concept">
+
+Four bits cannot cover the range of a whole tensor, but they can cover a **block** of neighbouring values if the block carries its own scale. That is the idea of the **microscaling (MX)** formats of the OCP MX specification: 32 elements of 8, 6 or 4 bits share one 8-bit scale, a pure power of two (E8M0), so an MXFP4 block costs <V of="mx.mxfp4.normal.bits_per_value" fmt="num" /> bits per value.
+
+The animation runs the specification's conversion (section 6.3). Find the largest magnitude in the block; take the largest power of two not above it, and divide by the largest power of two the element type can hold (4 for FP4). That is the scale $X$. Every element is stored as $V_i / X$, rounded to the element type, and clamped if it lands beyond the type's largest value.
+
+With an ordinary block, MXFP4 keeps all but <V of="mx.mxfp4.normal.zeros" fmt="int" /> of the 32 values away from zero. Now pick the block **with an outlier**: one value of 24 drags the scale up to <V of="mx.mxfp4.outlier.scale" fmt="num" />, every other element becomes a small fraction of the grid, and <V of="mx.mxfp4.outlier.zeros" fmt="int" /> of them fall into FP4's gap around zero. Outliers are the central problem of low-bit formats, and small blocks are one answer: an outlier can only spoil its own 32 neighbours. MXFP8 keeps all 32 (E4M3 has far more values near zero). Pick **tiny values** and compare the last readout: stored directly as FP4, all <V of="mx.mxfp4.tiny.plain_zeros" fmt="int" /> would flush to zero; with the shared scale, the block keeps its shape.
+
+</Layer>
+
+<Layer kind="maths">
+
+An MX block $\{X, P_1, \dots, P_k\}$ represents $v_i = X P_i$ with $X = 2^{s}$, $s \in [-127, 127]$. For element type with largest power of two $2^{e_{\max}}$ (E4M3: $2^8$; E5M2: $2^{15}$; E3M2: $2^4$; E2M3 and E2M1: $2^2$; MXINT8: $2^0$), the conversion picks
+
+$$
+s = \bigl\lfloor \log_2 \max_i |V_i| \bigr\rfloor - e_{\max},
+$$
+
+so the largest scaled element $\max_i |V_i| / X$ lies in $[2^{e_{\max}}, 2^{e_{\max}+1})$: at the top of the element's range, or just beyond its largest value (for E4M3, up to 512 against a maximum of 448), where it is clamped. An element $V_i$ much smaller than the block maximum, with $|V_i| / X$ below half the element type's smallest subnormal, is stored as zero; for FP4 that happens below somewhere between $\tfrac{1}{32}$ and $\tfrac{1}{16}$ of the block maximum, depending on where the maximum sits in its binade.
+
+The dot product of two MX vectors factors the scales out, $\sum_i X^{(A)} P^{(A)}_i \, X^{(B)} P^{(B)}_i = X^{(A)} X^{(B)} \sum_i P^{(A)}_i P^{(B)}_i$, so the hardware multiplies narrow elements and applies one scale per block.
+
+</Layer>
+
+<Layer kind="code">
+
+The conversion, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts) (`exponentOf` is the exact $\lfloor \log_2 \rfloor$ of a double; `mxElement` rounds to nearest even and saturates):
+
+```ts
+const se =
+  amax === 0
+    ? -127
+    : Math.max(-127, Math.min(127, exponentOf(amax) - f.emax_elem));
+const X = pow2(se);
+```
+
+```ts
+const t = v / X;
+const u = mode === "sr" ? rng.u32() : 0;
+const el = mxElement(t, mid, mode, u);
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The probe values and the MX blocks are illustrative: the blocks are 32 FP16 values from a seeded generator (approximately normal), one of them replaced by 24 for the outlier case, or scaled by $2^{-12}$ for the tiny case. The MX conversion is the specification's own; it leaves other scale choices open, and some implementations round the scale differently.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- NVIDIA GPU series: [The block-floating-point idea](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-03) and [MXFP4, the OCP microscaling spec](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-05).
+- Google TPU series: [FP8, OCP E4M3 / E5M2](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-08); Local LLM series: [FP8 and beyond, native GPU formats](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-06).
+- [OCP Microscaling Formats (MX) Specification v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf); Rouhani et al., [Microscaling data formats for deep learning](https://arxiv.org/abs/2310.10537) (2023); Micikevicius et al., [FP8 formats for deep learning](https://arxiv.org/abs/2209.05433) (2022); Kalamkar et al., [A study of BFLOAT16 for deep learning training](https://arxiv.org/abs/1905.12322) (2019).
+
+</Callout>

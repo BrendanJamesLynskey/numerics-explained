@@ -1,0 +1,85 @@
+<SumWidget>
+  <Eq
+    label="Kahan summation: subtract the compensation from the next input, add, then recover the part of y that the addition lost into c"
+    tex="\begin{gathered} y = x_i - \htmlClass{hl-comp}{c}, \qquad t = s + y \\ \htmlClass{hl-comp}{c} = (t - s) - y, \qquad s = t \end{gathered}"
+  />
+</SumWidget>
+
+<Layer kind="concept">
+
+Every dot product, every matrix multiply and every normalisation is a long sum, and every addition in a sum is rounded. Most of the time the errors are tiny and cancel. In low precision they can do something much worse: **stop the sum altogether**.
+
+The animation adds <V of="demo.sumN" fmt="int" /> numbers between 0 and 1. The exact total is <V of="sum.fp16.uniform.exact" fmt="num" />. Added one at a time in FP16 the running total climbs normally until it reaches 2,048, where FP16's ulp becomes 2: from then on every input is less than half an ulp, every addition rounds back down, and the sum stays at <V of="sum.fp16.uniform.naive" fmt="int" /> for good, half the true answer. In BF16, with three fewer mantissa bits, the same thing happens already at <V of="sum.bf16.uniform.naive" fmt="int" />. This is the stagnation of [chapter 2](/learn/02-rounding), with a growing sum in place of $h$.
+
+Three fixes, all running in the same animation:
+
+- **Accumulate in a wider format.** The FP32 running total ends at <V of="sum.fp16.uniform.naive32" fmt="num" />. This is what hardware does: tensor cores multiply FP16 or BF16 inputs and can add the products into an FP32 accumulator, the usual choice.
+- **Kahan summation** keeps a second number, the compensation $c$, that catches the low-order bits each addition throws away and feeds them back into the next one. Even with every operation in FP16 it reaches <V of="sum.fp16.uniform.kahan" fmt="int" />, the representable FP16 value nearest the exact total.
+- **Pairwise summation** adds the numbers in a balanced tree: pairs, then pairs of pairs. Partial sums stay comparable in size to the numbers being added, so no input is swamped. It reaches <V of="sum.fp16.uniform.pairwise" fmt="int" />, and this ordering is what numpy's `sum` uses (in blocks, along the fast axis) and what parallel reductions on a GPU do naturally.
+
+Try "all ones": the naive FP16 sum stops at exactly <V of="sum.fp16.ones.naive" fmt="int" />, because $2048 + 1$ is a tie and ties go to the even neighbour, 2,048. Try "± normal": the sum wanders around zero, the errors are smaller, and the order of the additions still changes the answer.
+
+</Layer>
+
+<Layer kind="maths">
+
+With unit roundoff $u = 2^{-(m+1)}$ (half an ulp at 1), the computed naive sum $\hat s$ of $x_1, \dots, x_n$ satisfies (Higham, 1993)
+
+$$
+|\hat s - s| \;\le\; (n-1)\,u \sum_{i=1}^{n} |x_i| + O(u^2),
+$$
+
+an error that grows with $n$. Pairwise summation replaces $n - 1$ by $\lceil \log_2 n \rceil$, the depth of the tree, and Kahan's compensated sum removes the dependence on $n$ to first order:
+
+$$
+|\hat s_{\text{Kahan}} - s| \;\le\; \bigl(2u + O(n u^2)\bigr) \sum_{i=1}^{n} |x_i| .
+$$
+
+The stagnation point follows from the spacing: once the running sum $S$ has $\operatorname{ulp}(S) > 2 \max_i |x_i|$, every input is below half an ulp and $\mathrm{round}(S + x_i) = S$. For FP16 and inputs below 1 that happens at $S = 2^{11} = 2048$, where the ulp becomes 2.
+
+</Layer>
+
+<Layer kind="code">
+
+Kahan's loop with every operation rounded to the format, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts):
+
+```ts
+for (const x of xs) {
+  const y = roundTo(roundTo(x, fid) - c, fid);
+  const t = addIn(s, y, fid);
+  c = roundTo(roundTo(t - s, fid) - y, fid);
+  s = t;
+}
+```
+
+And the pairwise tree (the left part is the largest power of two below $n$, so the tree over 8,192 inputs is perfectly balanced):
+
+```ts
+if (n === 1) return roundTo(xs[lo]!, fid);
+let p = 1;
+while (p * 2 < n) p *= 2;
+return addIn(
+  sumPairwise(xs, fid, lo, lo + p),
+  sumPairwise(xs, fid, lo + p, hi),
+  fid,
+);
+```
+
+`addIn(a, b)` rounds the exact double sum $a + b$ to the format once, which is exactly the format's own addition (the tests check it against numpy's `float16` and ml_dtypes' `bfloat16` arithmetic).
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The inputs are FP16 numbers from a seeded generator, so their exact running sums are exact in double precision. The FP16 and BF16 totals round after every single addition, as a scalar loop would; a GPU kernel accumulates in FP32 and in an order of its own, which is the point of the first fix.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [Non-associative floating point, the quiet one](https://brendanjameslynskey.github.io/Local_LLM_09_Determinism/#slide-03).
+- Google TPU series: [Accumulator widths and numerical stability](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-09).
+- Linear Algebra for AI series: [The dot product three ways](https://brendanjameslynskey.github.io/Linear_Algebra_AI_04_Inner_Products_and_Norms/#slide-01).
+- Kahan, [Further remarks on reducing truncation errors](https://doi.org/10.1145/363707.363723) (1965); Higham, [The accuracy of floating point summation](https://doi.org/10.1137/0914050) (1993); [numpy.sum](https://numpy.org/doc/stable/reference/generated/numpy.sum.html) (notes on pairwise summation).
+
+</Callout>

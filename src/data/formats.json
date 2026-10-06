@@ -1,0 +1,344 @@
+{
+ "formatOrder": [
+  "fp32",
+  "fp16",
+  "bf16",
+  "e5m2",
+  "e4m3",
+  "e3m2",
+  "e2m3",
+  "e2m1"
+ ],
+ "formats": [
+  {
+   "bias": 127,
+   "binades": 277,
+   "bits": 32,
+   "e": 8,
+   "emax": 127,
+   "emin": -126,
+   "eps": 1.1920928955078125e-07,
+   "id": "fp32",
+   "inf_code": 2139095040,
+   "kind": "ieee",
+   "long": "IEEE binary32 (single)",
+   "m": 23,
+   "max": 3.4028234663852886e+38,
+   "max_code": 2139095039,
+   "min_normal": 1.1754943508222875e-38,
+   "min_sub": 1.401298464324817e-45,
+   "name": "FP32",
+   "nan_code": 2143289344,
+   "ref": "Table 3.5, binary32",
+   "sign_bit": 2147483648,
+   "src": "ieee754"
+  },
+  {
+   "bias": 15,
+   "binades": 40,
+   "bits": 16,
+   "e": 5,
+   "emax": 15,
+   "emin": -14,
+   "eps": 0.0009765625,
+   "id": "fp16",
+   "inf_code": 31744,
+   "kind": "ieee",
+   "long": "IEEE binary16 (half)",
+   "m": 10,
+   "max": 65504.0,
+   "max_code": 31743,
+   "min_normal": 6.103515625e-05,
+   "min_sub": 5.960464477539063e-08,
+   "name": "FP16",
+   "nan_code": 32256,
+   "ref": "Table 3.5, binary16",
+   "sign_bit": 32768,
+   "src": "ieee754"
+  },
+  {
+   "bias": 127,
+   "binades": 261,
+   "bits": 16,
+   "e": 8,
+   "emax": 127,
+   "emin": -126,
+   "eps": 0.0078125,
+   "id": "bf16",
+   "inf_code": 32640,
+   "kind": "ieee",
+   "long": "bfloat16",
+   "m": 7,
+   "max": 3.3895313892515355e+38,
+   "max_code": 32639,
+   "min_normal": 1.1754943508222875e-38,
+   "min_sub": 9.183549615799121e-41,
+   "name": "BF16",
+   "nan_code": 32704,
+   "ref": "1 sign, 8 exponent, 7 mantissa bits; FP32's exponent",
+   "sign_bit": 32768,
+   "src": "bf16"
+  },
+  {
+   "bias": 15,
+   "binades": 32,
+   "bits": 8,
+   "e": 5,
+   "emax": 15,
+   "emin": -14,
+   "eps": 0.25,
+   "id": "e5m2",
+   "inf_code": 124,
+   "kind": "ieee",
+   "long": "OCP FP8 E5M2",
+   "m": 2,
+   "max": 57344.0,
+   "max_code": 123,
+   "min_normal": 6.103515625e-05,
+   "min_sub": 1.52587890625e-05,
+   "name": "FP8 E5M2",
+   "nan_code": 126,
+   "ref": "Tables 1 and 2",
+   "sign_bit": 128,
+   "src": "ofp8"
+  },
+  {
+   "bias": 7,
+   "binades": 18,
+   "bits": 8,
+   "e": 4,
+   "emax": 8,
+   "emin": -6,
+   "eps": 0.125,
+   "id": "e4m3",
+   "inf_code": -1,
+   "kind": "fn",
+   "long": "OCP FP8 E4M3",
+   "m": 3,
+   "max": 448.0,
+   "max_code": 126,
+   "min_normal": 0.015625,
+   "min_sub": 0.001953125,
+   "name": "FP8 E4M3",
+   "nan_code": 127,
+   "ref": "Tables 1 and 2",
+   "sign_bit": 128,
+   "src": "ofp8"
+  },
+  {
+   "bias": 3,
+   "binades": 9,
+   "bits": 6,
+   "e": 3,
+   "emax": 4,
+   "emin": -2,
+   "eps": 0.25,
+   "id": "e3m2",
+   "inf_code": -1,
+   "kind": "finite",
+   "long": "OCP MX FP6 E3M2",
+   "m": 2,
+   "max": 28.0,
+   "max_code": 31,
+   "min_normal": 0.25,
+   "min_sub": 0.0625,
+   "name": "FP6 E3M2",
+   "nan_code": -1,
+   "ref": "Table 4",
+   "sign_bit": 32,
+   "src": "mx"
+  },
+  {
+   "bias": 1,
+   "binades": 6,
+   "bits": 6,
+   "e": 2,
+   "emax": 2,
+   "emin": 0,
+   "eps": 0.125,
+   "id": "e2m3",
+   "inf_code": -1,
+   "kind": "finite",
+   "long": "OCP MX FP6 E2M3",
+   "m": 3,
+   "max": 7.5,
+   "max_code": 31,
+   "min_normal": 1.0,
+   "min_sub": 0.125,
+   "name": "FP6 E2M3",
+   "nan_code": -1,
+   "ref": "Table 4",
+   "sign_bit": 32,
+   "src": "mx"
+  },
+  {
+   "bias": 1,
+   "binades": 4,
+   "bits": 4,
+   "e": 2,
+   "emax": 2,
+   "emin": 0,
+   "eps": 0.5,
+   "id": "e2m1",
+   "inf_code": -1,
+   "kind": "finite",
+   "long": "OCP MX FP4 E2M1",
+   "m": 1,
+   "max": 6.0,
+   "max_code": 7,
+   "min_normal": 1.0,
+   "min_sub": 0.5,
+   "name": "FP4 E2M1",
+   "nan_code": -1,
+   "ref": "Table 5",
+   "sign_bit": 8,
+   "src": "mx"
+  }
+ ],
+ "granularities": [
+  [
+   "tensor",
+   0
+  ],
+  [
+   "channel",
+   0
+  ],
+  [
+   "group",
+   32
+  ],
+  [
+   "group",
+   16
+  ],
+  [
+   "group",
+   8
+  ]
+ ],
+ "modeNames": {
+  "rdn": "roundTowardNegative",
+  "rna": "roundTiesToAway",
+  "rne": "roundTiesToEven",
+  "rtz": "roundTowardZero",
+  "rup": "roundTowardPositive",
+  "sr": "stochastic"
+ },
+ "modes": [
+  "rne",
+  "rna",
+  "rtz",
+  "rup",
+  "rdn",
+  "sr"
+ ],
+ "mx": [
+  {
+   "bits": 8,
+   "elem": "e4m3",
+   "emax_elem": 8,
+   "id": "mxfp8_e4m3",
+   "name": "MXFP8 (E4M3)"
+  },
+  {
+   "bits": 8,
+   "elem": "e5m2",
+   "emax_elem": 15,
+   "id": "mxfp8_e5m2",
+   "name": "MXFP8 (E5M2)"
+  },
+  {
+   "bits": 6,
+   "elem": "e3m2",
+   "emax_elem": 4,
+   "id": "mxfp6_e3m2",
+   "name": "MXFP6 (E3M2)"
+  },
+  {
+   "bits": 6,
+   "elem": "e2m3",
+   "emax_elem": 2,
+   "id": "mxfp6_e2m3",
+   "name": "MXFP6 (E2M3)"
+  },
+  {
+   "bits": 4,
+   "elem": "e2m1",
+   "emax_elem": 2,
+   "id": "mxfp4",
+   "name": "MXFP4 (E2M1)"
+  },
+  {
+   "bits": 8,
+   "elem": "int8",
+   "emax_elem": 0,
+   "id": "mxint8",
+   "name": "MXINT8"
+  }
+ ],
+ "nf4": [
+  -1.0,
+  -0.6961928009986877,
+  -0.5250730514526367,
+  -0.39491748809814453,
+  -0.28444138169288635,
+  -0.18477343022823334,
+  -0.09105003625154495,
+  0.0,
+  0.07958029955625534,
+  0.16093020141124725,
+  0.24611230194568634,
+  0.33791524171829224,
+  0.44070982933044434,
+  0.5626170039176941,
+  0.7229568362236023,
+  1.0
+ ],
+ "probeFormats": [
+  "fp32",
+  "bf16",
+  "fp16",
+  "e5m2",
+  "e4m3",
+  "e2m1"
+ ],
+ "sources": {
+  "bf16": {
+   "title": "Google Cloud, The bfloat16 numerical format",
+   "url": "https://cloud.google.com/tpu/docs/bfloat16"
+  },
+  "bnb": {
+   "title": "bitsandbytes, get_4bit_type('nf4') and dQuantizeNF4 (commit 8336490)",
+   "url": "https://github.com/bitsandbytes-foundation/bitsandbytes/blob/833649043474794b8fe7a4136e0c40faf077b2e0/bitsandbytes/functional.py"
+  },
+  "fp8paper": {
+   "title": "Micikevicius et al., FP8 Formats for Deep Learning (arXiv 2209.05433)",
+   "url": "https://arxiv.org/abs/2209.05433"
+  },
+  "ieee754": {
+   "title": "IEEE Standard for Floating-Point Arithmetic, IEEE Std 754-2019",
+   "url": "https://doi.org/10.1109/IEEESTD.2019.8766229"
+  },
+  "ml_dtypes": {
+   "title": "ml_dtypes: NumPy dtype extensions for FP8, FP6, FP4 and bfloat16",
+   "url": "https://github.com/jax-ml/ml_dtypes"
+  },
+  "mx": {
+   "title": "OCP Microscaling Formats (MX) Specification, Version 1.0 (September 2023)",
+   "url": "https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf"
+  },
+  "mxpaper": {
+   "title": "Rouhani et al., Microscaling Data Formats for Deep Learning (arXiv 2310.10537)",
+   "url": "https://arxiv.org/abs/2310.10537"
+  },
+  "ofp8": {
+   "title": "OCP 8-bit Floating Point Specification (OFP8), Revision 1.0 (2023-12-01 corrected biases)",
+   "url": "https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1"
+  },
+  "qlora": {
+   "title": "Dettmers et al., QLoRA: Efficient Finetuning of Quantized LLMs (arXiv 2305.14314)",
+   "url": "https://arxiv.org/abs/2305.14314"
+  }
+ }
+}
