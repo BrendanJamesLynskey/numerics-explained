@@ -78,6 +78,7 @@ The inputs are FP16 numbers from a seeded generator, so their exact running sums
 <Callout kind="deeper">
 
 - Local LLM series: [Non-associative floating point, the quiet one](https://brendanjameslynskey.github.io/Local_LLM_09_Determinism/#slide-03).
+- Systolic Arrays Explained: [inside a PE](https://systolic-arrays-explained.vercel.app/learn/06-inside-a-pe), a MAC unit that multiplies bfloat16 or FP16 exactly and accumulates in FP32, register by register.
 - Google TPU series: [Accumulator widths and numerical stability](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-09).
 - Linear Algebra for AI series: [The dot product three ways](https://brendanjameslynskey.github.io/Linear_Algebra_AI_04_Inner_Products_and_Norms/#slide-01).
 - Kahan, [Further remarks on reducing truncation errors](https://doi.org/10.1145/363707.363723) (1965); Higham, [The accuracy of floating point summation](https://doi.org/10.1137/0914050) (1993); [numpy.sum](https://numpy.org/doc/stable/reference/generated/numpy.sum.html) (notes on pairwise summation).

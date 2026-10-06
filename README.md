@@ -16,10 +16,11 @@ It is the fifth of a family of companion sites: the
 shows one forward pass, [LLM Inference Explained](https://llm-inference-explained.vercel.app/)
 shows how a model is served, [LLM Architectures Explained](https://llm-architectures-explained.vercel.app/)
 shows how the models differ, [GPU Kernels Explained](https://gpu-kernels-explained.vercel.app/)
-shows how a GPU runs the maths, and this site is about the numbers
-themselves. They share one design system and link to each other from the
-header ("Decoder · Inference · Architectures · Kernels · Numerics ·
-Silicon"; the last is coming).
+shows how a GPU runs the maths, this site is about the numbers
+themselves, and [Systolic Arrays Explained](https://systolic-arrays-explained.vercel.app/)
+is the silicon underneath. They share one design system and link to each
+other from the header ("Decoder · Inference · Architectures · Kernels ·
+Numerics · Silicon").
 
 **Live:** [numerics-explained.vercel.app](https://numerics-explained.vercel.app/)
 

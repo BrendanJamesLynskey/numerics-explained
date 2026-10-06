@@ -56,6 +56,7 @@ Two blocks of 32 approximately normal values (generated). FP16 here multiplies a
 <Callout kind="deeper">
 
 - NVIDIA GPU series: [FP4 E2M1, the element](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-04), [MXFP4 vs NVFP4](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-07), [where it lives: Blackwell tensor cores](https://brendanjameslynskey.github.io/NVIDIA_GPU_38_BFP4_Formats/#slide-08) and [number formats in tensor cores](https://brendanjameslynskey.github.io/NVIDIA_GPU_03_Tensor_Cores/#slide-08).
+- Systolic Arrays Explained: [inside a PE](https://systolic-arrays-explained.vercel.app/learn/06-inside-a-pe) (an INT8, FP16 and bfloat16 MAC pipeline, checked against RTL) and [other ways to build it](https://systolic-arrays-explained.vercel.app/learn/08-other-ways) (tensor cores against systolic arrays).
 - GPU Kernels Explained: [quantised kernels](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels) and [GEMM](https://gpu-kernels-explained.vercel.app/learn/07-gemm).
 - Horowitz, [Computing's energy problem (and what we can do about it)](https://doi.org/10.1109/ISSCC.2014.6757323), ISSCC 2014; the table as reproduced by Gholami et al., [A survey of quantization methods for efficient neural network inference](https://arxiv.org/abs/2103.13630) (2021), Figure 7.
 - OCP [Microscaling Formats (MX) Specification v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf), section 6 (dot products).
