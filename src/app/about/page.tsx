@@ -11,6 +11,7 @@ import {
   GITHUB_URL,
   INFERENCE_URL,
   KERNELS_URL,
+  SILICON_URL,
   LOCAL_LLM_HUB,
   TPU_HUB,
   repoFile,
@@ -51,10 +52,14 @@ export default function AboutPage(): JSX.Element {
           ,{" "}
           <a href={ARCHITECTURES_URL} className={A}>
             LLM Architectures Explained
-          </a>{" "}
-          and{" "}
+          </a>
+          ,{" "}
           <a href={KERNELS_URL} className={A}>
             GPU Kernels Explained
+          </a>{" "}
+          and{" "}
+          <a href={SILICON_URL} className={A}>
+            Systolic Arrays Explained
           </a>
           . The chapters link the matching slides of the{" "}
           <a href={LOCAL_LLM_HUB} className={A}>
