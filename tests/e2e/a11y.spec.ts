@@ -15,6 +15,11 @@ const PAGES = [
   "/learn/03-accumulation",
   "/learn/04-formats-zoo",
   "/learn/05-quantisation-basics",
+  "/learn/06-outliers",
+  "/learn/07-gptq",
+  "/learn/08-awq-and-nf4",
+  "/learn/09-kv-cache",
+  "/learn/10-hardware",
 ];
 
 for (const [scheme, width] of [

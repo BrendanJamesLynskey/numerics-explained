@@ -1,0 +1,102 @@
+<Nf4Widget>
+  <Eq
+    label="NF4's positive values are normal quantiles at evenly spaced probabilities from the offset down to one half; the code book is divided by its largest value"
+    tex="\begin{gathered} \htmlClass{hl-z}{z_i} = \Phi^{-1}\bigl(\htmlClass{hl-p}{p_i}\bigr), \qquad \htmlClass{hl-p}{p_i} = \delta + \tfrac{i}{8}\bigl(\tfrac12 - \delta\bigr), \quad \delta = 0.9677083 \\ \htmlClass{hl-norm}{q_i = z_i / \max_k z_k} \end{gathered}"
+  />
+</Nf4Widget>
+
+<Layer kind="concept">
+
+INT4's sixteen levels are evenly spaced. Trained weights are not evenly spread: they cluster near zero in a roughly normal bell. **NF4** (NormalFloat, from QLoRA) spends its sixteen codes where the weights are, so each code is used about equally often. QLoRA's recipe: take quantiles of the standard normal distribution, scale them to $[-1, 1]$, and quantise each block of 64 weights by dividing it by its absolute maximum and picking the nearest code.
+
+The animation rebuilds bitsandbytes' table, the one QLoRA ships, from scratch: eight positive quantiles at probabilities evenly spaced from $\delta = 0.9677083$ down to $0.5$, seven negative ones, and an exact zero (so the type is asymmetric: zero gets a code of its own, and padding or pruned weights quantise exactly). Divided by the largest quantile, <V of="nf4.zmax" fmt="num" />, the values match bitsandbytes' table to <V of="nf4.max_diff" fmt="sci" /> (its table is built in 32-bit floats). bitsandbytes documents the offset as the outermost quantile boundary, about 1.85 standard deviations, chosen empirically.
+
+Does it help? On 4,096 approximately normal values in blocks of 64, NF4's mean squared error is <V of="nf4.mse_nf4" /> against <V of="nf4.mse_int4" /> for INT4 absmax with the same blocks, <V of="nf4.ratio" /> times smaller (SQNR <V of="nf4.sqnr_nf4" fmt="db" /> against <V of="nf4.sqnr_int4" fmt="db" />).
+
+</Layer>
+
+<AwqWidget>
+  <Eq
+    label="AWQ: scale input channel i by its mean absolute activation to the power alpha, quantise the scaled weights, and divide the activations by the same scale; choose alpha to minimise the output error"
+    tex="\begin{gathered} \htmlClass{hl-s}{s_i} = \overline{|x_i|}^{\,\htmlClass{hl-alpha}{\alpha}}, \qquad \hat W = Q\bigl(W\,\mathrm{diag}(\htmlClass{hl-s}{s})\bigr)\,\mathrm{diag}(\htmlClass{hl-s}{s})^{-1} \\ \htmlClass{hl-alpha}{\alpha^\star} = \arg\min_{\alpha} \| W X - \hat W X \|^2 \end{gathered}"
+  />
+</AwqWidget>
+
+<Layer kind="concept">
+
+**AWQ** (activation-aware weight quantisation, Lin et al.) starts from an observation: a small fraction of weights matter far more than the rest, and they are found by looking at the **activations**, not the weights. Keeping just 1% of the weight channels in FP16, chosen by activation size, recovers most of the accuracy that plain 4-bit rounding loses. Mixed precision is awkward for kernels, so AWQ gets the same effect with a scale instead: multiply the weights of input channel $i$ by $s_i > 1$ before rounding and divide its activations by $s_i$. The scaled weights see a relatively finer grid, so the important channels are rounded more accurately.
+
+The scale is $s_i = \overline{|x_i|}^{\alpha}$, and AWQ searches $\alpha \in [0, 1]$ on calibration data. The animation runs that search over the layer of [chapter 7](/learn/07-gptq), in eighths: the grey bars are each channel's mean activation, the orange bars the scale it gets. At INT3 in groups of 8, no scaling ($\alpha = 0$) gives an output error of <V of="awq.b3.base" />; the best eighth, $\alpha =$ <V of="awq.b3.best_alpha" />, gives <V of="awq.b3.best" />, <V of="awq.b3.ratio" /> times smaller. This layer's channels differ by less than an LLM's, so the gain is smaller than the paper's.
+
+</Layer>
+
+<TinyWidget target="weights" initial="nf4">
+  <Eq
+    label="Logit drift: the root mean square change of the logits over the root mean square of the logits, over every position of every prompt"
+    tex="\begin{gathered} \text{drift} = \sqrt{\frac{\sum_{t,v} \bigl(\ell_{t,v} - \hat\ell_{t,v}\bigr)^2}{\sum_{t,v} \ell_{t,v}^2}} \\ \hat\ell = f\bigl(\htmlClass{hl-w}{\hat W}\bigr) \end{gathered}"
+  />
+</TinyWidget>
+
+<Layer kind="concept">
+
+Now a real network. The animation above runs the **Transformer Decoder Explainer's tiny transformer** (two blocks, 16-wide, two heads, a 64-character vocabulary) in your browser, twice: once as is, once with the weights of every block's six linear layers quantised. It predicts the next character at all 32 positions of four prompts, and compares. The weights are random, so the text is gibberish, but every multiply is real.
+
+Over the 128 predictions, with the token embedding (and the tied output head) kept at full precision:
+
+| Weights               | bits per weight                       | logit drift                            | top prediction unchanged                               |
+| --------------------- | ------------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| INT8 per channel      | <V of="tiny.weights.int8_ch.bits" />  | <V of="tiny.weights.int8_ch.drift" />  | <V of="tiny.weights.int8_ch.agree" fmt="int" /> of 128 |
+| FP8 E4M3 per channel  | <V of="tiny.weights.fp8_ch.bits" />   | <V of="tiny.weights.fp8_ch.drift" />   | <V of="tiny.weights.fp8_ch.agree" fmt="int" />         |
+| INT4 per channel      | <V of="tiny.weights.int4_ch.bits" />  | <V of="tiny.weights.int4_ch.drift" />  | <V of="tiny.weights.int4_ch.agree" fmt="int" />        |
+| INT4 groups of 8      | <V of="tiny.weights.int4_g8.bits" />  | <V of="tiny.weights.int4_g8.drift" />  | <V of="tiny.weights.int4_g8.agree" fmt="int" />        |
+| INT4 blocks of 64     | <V of="tiny.weights.int4_b64.bits" /> | <V of="tiny.weights.int4_b64.drift" /> | <V of="tiny.weights.int4_b64.agree" fmt="int" />       |
+| NF4 blocks of 64      | <V of="tiny.weights.nf4.bits" />      | <V of="tiny.weights.nf4.drift" />      | <V of="tiny.weights.nf4.agree" fmt="int" />            |
+| MXFP4 blocks of 32    | <V of="tiny.weights.mxfp4.bits" />    | <V of="tiny.weights.mxfp4.drift" />    | <V of="tiny.weights.mxfp4.agree" fmt="int" />          |
+| INT3 per channel      | <V of="tiny.weights.int3_ch.bits" />  | <V of="tiny.weights.int3_ch.drift" />  | <V of="tiny.weights.int3_ch.agree" fmt="int" />        |
+| GPTQ INT3 per channel | <V of="tiny.weights.gptq3_ch.bits" /> | <V of="tiny.weights.gptq3_ch.drift" /> | <V of="tiny.weights.gptq3_ch.agree" fmt="int" />       |
+| INT3 groups of 8      | <V of="tiny.weights.int3_g8.bits" />  | <V of="tiny.weights.int3_g8.drift" />  | <V of="tiny.weights.int3_g8.agree" fmt="int" />        |
+
+Three lessons survive the model's smallness. Each bit removed roughly doubles the drift or more. With the same blocks of 64, NF4's grid beats INT4's, because these weights are normal. And GPTQ, calibrated on four other prompts, recovers part of what plain INT3 rounding loses. Pick a format and a prompt above and watch where predictions flip: they flip where the reference's top two candidates were close, and the reference's median gap between them is <V of="tiny.margins.median_gap" /> logits.
+
+</Layer>
+
+<Layer kind="code">
+
+NF4's quantiles, cut from [`src/lib/num/model.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/model.ts). The normal CDF is summed as a power series and inverted by bisection, so nothing depends on a library's inverse-CDF approximation:
+
+```ts
+const pos = Array.from({ length: 8 }, (_, i) => {
+  const p = NF4_OFFSET + ((0.5 - NF4_OFFSET) * i) / 8;
+  return { p, z: normPpf(p) };
+});
+const neg = Array.from({ length: 7 }, (_, i) => {
+  const p = NF4_OFFSET + ((0.5 - NF4_OFFSET) * i) / 7;
+  return { p: 1 - p, z: -normPpf(p) };
+});
+```
+
+AWQ's scales for one $\alpha = k/8$, normalised so the largest and smallest multiply to one:
+
+```ts
+let s = meanAbs.map((m) => powDyadic(Math.max(m, 1e-8), k8));
+const smax = Math.max(...s);
+const smin = Math.min(...s);
+const norm = Math.sqrt(smax * smin);
+s = s.map((v) => v / norm);
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The tiny model is the [Transformer Decoder Explainer](https://transformer-decoder-explained.vercel.app)'s, vendored unchanged from its repository; its weights are random. The explainer draws every matrix from $N(0, 0.02)$, which leaves its blocks nearly silent beside the residual stream, so this site rescales the same draws: each linear layer to standard deviation $1/\sqrt{\text{fan-in}}$ and the embedding to $N(0, 1)$. Per-channel and per-group bit counts assume a 16-input channel and FP16 scales. AWQ here searches eighths of $\alpha$ (the paper's search uses a grid of 20) and has no clipping search. A real model's numbers differ; the orderings are the point.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- Local LLM series: [AWQ & GPTQ](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-05), [GGUF, the llama.cpp family](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-04) and [pick a format](https://brendanjameslynskey.github.io/Local_LLM_07_Quantization/#slide-08).
+- Dettmers et al., [QLoRA: efficient finetuning of quantized LLMs](https://arxiv.org/abs/2305.14314) (2023), section 3 and appendix E for NF4; Lin et al., [AWQ: activation-aware weight quantization for LLM compression and acceleration](https://arxiv.org/abs/2306.00978) (2023).
+- bitsandbytes' [create_normal_map](https://github.com/bitsandbytes-foundation/bitsandbytes/blob/833649043474794b8fe7a4136e0c40faf077b2e0/bitsandbytes/functional.py), the table this chapter rebuilds.
+
+</Callout>

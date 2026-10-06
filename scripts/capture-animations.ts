@@ -55,7 +55,40 @@ const CLIPS: Clip[] = [
     widget: "mx-widget",
     fps: 6,
   },
+  {
+    name: "outliers",
+    path: "/learn/06-outliers",
+    widget: "outlier-widget",
+    fps: 3,
+  },
+  {
+    name: "gptq",
+    path: "/learn/07-gptq",
+    widget: "gptq-widget",
+    fps: 3,
+  },
+  {
+    name: "nf4",
+    path: "/learn/08-awq-and-nf4",
+    widget: "nf4-widget",
+    fps: 3,
+  },
+  {
+    name: "kv-cache",
+    path: "/learn/09-kv-cache",
+    widget: "tiny-kv-widget",
+    fps: 4,
+  },
+  {
+    name: "dot-product",
+    path: "/learn/10-hardware",
+    widget: "dot-widget",
+    fps: 5,
+  },
 ];
+
+// `pnpm animations outliers gptq` records only the named clips
+const ONLY = process.argv.slice(2);
 
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
@@ -67,7 +100,8 @@ async function main(): Promise<void> {
   });
   const page = await context.newPage();
   for (const c of CLIPS) {
-    const dir = mkdtempSync(path.join(tmpdir(), `gke-${c.name}-`));
+    if (ONLY.length > 0 && !ONLY.includes(c.name)) continue;
+    const dir = mkdtempSync(path.join(tmpdir(), `num-${c.name}-`));
     await page.goto(BASE + c.path, { waitUntil: "networkidle" });
     const fig = page.getByTestId(c.widget);
     await fig.waitFor();

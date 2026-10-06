@@ -41,6 +41,36 @@ export const SECTIONS = [
     summary:
       "Integers and a scale: absmax and zero-point, and why one scale per group of weights beats one per tensor, on a weight heat map.",
   },
+  {
+    slug: "06-outliers",
+    title: "The outlier problem",
+    summary:
+      "A few activation channels far larger than the rest wreck per-tensor INT8. LLM.int8() splits them off; SmoothQuant moves the difficulty into the weights.",
+  },
+  {
+    slug: "07-gptq",
+    title: "GPTQ",
+    summary:
+      "Quantise one column, push its error into the columns still to come, weighted by the inverse Hessian: second-order error compensation, column by column.",
+  },
+  {
+    slug: "08-awq-and-nf4",
+    title: "AWQ and NF4",
+    summary:
+      "Scale the input channels that matter before rounding; build a 4-bit code book from the normal distribution's quantiles. Then quantise a real (tiny) transformer.",
+  },
+  {
+    slug: "09-kv-cache",
+    title: "Quantising the KV cache",
+    summary:
+      "Keys and values in 8, 4 and 2 bits, per token and per channel, and FP4 with a scale per 16: memory saved against logit drift, measured on a live transformer.",
+  },
+  {
+    slug: "10-hardware",
+    title: "Quantisation in hardware",
+    summary:
+      "Where the bits pay off: dequantising in registers, block-scaled formats in tensor cores, and the energy and area of each operation.",
+  },
 ] as const;
 
 export type SectionSlug = (typeof SECTIONS)[number]["slug"];

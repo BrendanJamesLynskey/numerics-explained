@@ -16,7 +16,15 @@ import {
   MxWidget,
   GranularityWidget,
   ZeroPointWidget,
+  OutlierWidget,
+  SmoothWidget,
+  GptqWidget,
+  AwqWidget,
+  Nf4Widget,
+  TinyWidget,
+  DotWidget,
 } from "@/components/interactive/lazy";
+import { EnergyChart } from "@/components/viz/EnergyChart";
 import { Eq } from "@/components/mdx/Eq";
 import { V } from "@/components/mdx/V";
 import { Callout } from "@/components/ui/Callout";
@@ -37,4 +45,12 @@ export const mdxComponents: NonNullable<MDXRemoteProps["components"]> = {
   MxWidget,
   GranularityWidget,
   ZeroPointWidget,
+  OutlierWidget,
+  SmoothWidget,
+  GptqWidget,
+  AwqWidget,
+  Nf4Widget,
+  TinyWidget,
+  DotWidget,
+  EnergyChart,
 };

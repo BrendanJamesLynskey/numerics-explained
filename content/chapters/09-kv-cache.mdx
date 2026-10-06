@@ -1,0 +1,77 @@
+<TinyWidget target="kv" initial="int4_tok">
+  <Eq
+    label="Attention reads the cached keys and values; quantising them replaces K and V by their quantised versions in both the scores and the weighted sum"
+    tex="\begin{gathered} \mathrm{Attn}(q_t) = \mathrm{softmax}\!\Bigl(\frac{q_t\, \htmlClass{hl-kv}{\hat K}_{\le t}^{\top}}{\sqrt{d_h}}\Bigr)\, \htmlClass{hl-kv}{\hat V}_{\le t} \\ \htmlClass{hl-kv}{\hat K} = Q(K),\ \ \htmlClass{hl-kv}{\hat V} = Q(V) \end{gathered}"
+  />
+</TinyWidget>
+
+<Layer kind="concept">
+
+During generation a transformer keeps every past token's keys and values, the **KV cache**, and reads all of it for every new token. For long contexts and large batches it outgrows the weights, and decode time is mostly spent reading it (the [Inference site's KV-cache chapter](https://llm-inference-explained.vercel.app/learn/02-kv-cache) measures how much). Storing it in fewer bits shrinks both the memory and the time.
+
+The animation quantises the tiny model's keys and values as they are computed, in every layer, and compares its predictions with the unquantised model's. Over the 128 predictions of four prompts:
+
+| KV cache                         | bits per number                   | of FP16's memory                           | logit drift                        | top prediction unchanged                       |
+| -------------------------------- | --------------------------------- | ------------------------------------------ | ---------------------------------- | ---------------------------------------------- |
+| FP16                             | <V of="tiny.kv.fp16.bits" />      | <V of="tiny.kv.fp16.mem" fmt="pct" />      | <V of="tiny.kv.fp16.drift" />      | <V of="tiny.kv.fp16.agree" fmt="int" /> of 128 |
+| FP8 E4M3, one scale per tensor   | <V of="tiny.kv.fp8.bits" />       | <V of="tiny.kv.fp8.mem" fmt="pct" />       | <V of="tiny.kv.fp8.drift" />       | <V of="tiny.kv.fp8.agree" fmt="int" />         |
+| INT8 per token                   | <V of="tiny.kv.int8_tok.bits" />  | <V of="tiny.kv.int8_tok.mem" fmt="pct" />  | <V of="tiny.kv.int8_tok.drift" />  | <V of="tiny.kv.int8_tok.agree" fmt="int" />    |
+| FP4 E2M1, E4M3 scale per 16      | <V of="tiny.kv.fp4_16.bits" />    | <V of="tiny.kv.fp4_16.mem" fmt="pct" />    | <V of="tiny.kv.fp4_16.drift" />    | <V of="tiny.kv.fp4_16.agree" fmt="int" />      |
+| INT4 per token                   | <V of="tiny.kv.int4_tok.bits" />  | <V of="tiny.kv.int4_tok.mem" fmt="pct" />  | <V of="tiny.kv.int4_tok.drift" />  | <V of="tiny.kv.int4_tok.agree" fmt="int" />    |
+| INT4, K per channel, V per token | <V of="tiny.kv.int4_kivi.bits" /> | <V of="tiny.kv.int4_kivi.mem" fmt="pct" /> | <V of="tiny.kv.int4_kivi.drift" /> | <V of="tiny.kv.int4_kivi.agree" fmt="int" />   |
+| INT2 per token                   | <V of="tiny.kv.int2_tok.bits" />  | <V of="tiny.kv.int2_tok.mem" fmt="pct" />  | <V of="tiny.kv.int2_tok.drift" />  | <V of="tiny.kv.int2_tok.agree" fmt="int" />    |
+| INT2, K per channel, V per token | <V of="tiny.kv.int2_kivi.bits" /> | <V of="tiny.kv.int2_kivi.mem" fmt="pct" /> | <V of="tiny.kv.int2_kivi.drift" /> | <V of="tiny.kv.int2_kivi.agree" fmt="int" />   |
+
+Eight bits are close to free; four bits cost a few per cent of drift and almost no flipped predictions; two bits break it. The scatter at the bottom of the animation is the trade-off at a glance: memory along the bottom, damage up the side.
+
+**Per token or per channel?** A per-token scale covers one token's channels (here, one head's 8); a per-channel scale covers one channel across the tokens. KIVI found that in real LLMs the **keys** have a few fixed channels with very large magnitudes, so keys should be quantised per channel, and the values per token. KVQuant reached the same conclusion for keys and quantises them before the rotary embedding mixes their channels. This random model has no such outlier channels, and the two layouts give about the same drift: the rule comes from trained models' statistics, not from the arithmetic.
+
+**FP4 with a fine-grained scale.** The FP4 row uses E2M1 elements with one FP8 E4M3 scale per 16 channels, the layout DeepSeek-V4.1-Flash reports for its main KV cache (its section 2.4.4), which it says nearly halves the cache against FP8. With an FP8 scale per 16 values it costs <V of="tiny.kv.fp4_16.bits" /> bits per number, and here it lands near INT4 per token. The [Architectures site's encoder-decoder chapter](https://llm-architectures-explained.vercel.app/learn/09-encoder-decoder-and-ced) covers the model; this site's reconstruction of the rounding is its own.
+
+</Layer>
+
+<Layer kind="maths">
+
+A KV cache holds $2 \times n_{\text{layers}} \times n_{\text{kv heads}} \times d_h$ numbers per token. At $b$ bits per number plus one $s$-bit scale per group of $g$, the cost per number is $b + s/g$ bits: $4 + 16/8 = 6$ for this model's INT4 with an FP16 scale per head of 8, $4 + 8/16 = 4.5$ for FP4 with an E4M3 scale per 16. Real heads are 64 to 128 wide, so the scale overhead there is a fraction of a bit.
+
+Errors in the keys enter through the softmax: a score error $\epsilon$ multiplies a token's attention weight by about $e^{\epsilon}$, so a key error matters most for the tokens a query attends to strongly. Errors in the values are averaged by the attention weights, so per-token value scales that keep each token's vector accurate are what matter.
+
+</Layer>
+
+<Layer kind="code">
+
+FP4 E2M1 with one E4M3 scale per 16 channels, cut from [`src/lib/num/tiny.ts`](https://github.com/BrendanJamesLynskey/numerics-explained/blob/main/src/lib/num/tiny.ts) (`roundTo` is the library's tested encoder):
+
+```ts
+for (let c0 = 0; c0 < r.length; c0 += block) {
+  const blk = r.slice(c0, c0 + block);
+  let s = roundTo(amaxOf(blk) / 6, "e4m3", "rne", true);
+  if (s === 0) s = INFO.e4m3.min_sub;
+  for (const v of blk) row.push(roundTo(v / s, "e2m1", "rne", true) * s);
+}
+```
+
+The quantised keys and values replace the real ones between the projection and the attention, inside an otherwise unchanged copy of the explainer's attention:
+
+```ts
+const Q = matmul(x, w.W_q);
+let K = matmul(x, w.W_k);
+let V = matmul(x, w.W_v);
+if (kv) [K, V] = kv(layer, K, V);
+```
+
+</Layer>
+
+<Callout kind="illustrative">
+
+The tiny model's weights are random (rescaled as in [chapter 8](/learn/08-awq-and-nf4)), its context is 32 characters, and every prompt is scored teacher-forced, all positions at once, with each layer's keys and values quantised before attention. KIVI keeps the most recent tokens in full precision and groups keys over windows of tokens; this site's per-channel scale covers the whole 32-token prompt. Per-token scales are FP16, per head of 8 channels. Real models' numbers differ; trained models' key outliers are what make the per-channel layout win.
+
+</Callout>
+
+<Callout kind="deeper">
+
+- LLM Inference Explained: [the KV cache](https://llm-inference-explained.vercel.app/learn/02-kv-cache) and [quantisation and decode speed](https://llm-inference-explained.vercel.app/learn/08-quantisation).
+- Modern Architectures series: [the KV-cache saving, arithmetic shown](https://brendanjameslynskey.github.io/Arch_06_Asymmetric_Causal_Encoder_Decoder/#slide-06).
+- Liu et al., [KIVI: a tuning-free asymmetric 2bit quantization for KV cache](https://arxiv.org/abs/2402.02750) (2024); Hooper et al., [KVQuant: towards 10 million context length LLM inference with KV cache quantization](https://arxiv.org/abs/2401.18079) (2024); DeepSeek-AI, [DeepSeek-V4.1-Flash: pushing the limits of KV cache compression](https://arxiv.org/abs/2609.19969) (2026).
+
+</Callout>

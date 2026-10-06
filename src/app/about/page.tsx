@@ -100,10 +100,36 @@ export default function AboutPage(): JSX.Element {
           </li>
           <li>
             summation in a format (naive, Kahan, pairwise), and GPTQ, AWQ-style
-            scaling and SmoothQuant on small layers (used by the later
-            chapters).
+            scaling and SmoothQuant on small layers;
+          </li>
+          <li>
+            LLM.int8()&apos;s mixed-precision decomposition, NF4&apos;s
+            derivation from normal quantiles, and one dot product in FP32, FP16,
+            INT8 and MXFP4 with the energy of each operation.
           </li>
         </ul>
+
+        <h2>The tiny transformer</h2>
+        <p>
+          Chapters 8 and 9 quantise a real network: the{" "}
+          <a href={DECODER_URL} className={A}>
+            Transformer Decoder Explainer
+          </a>
+          &apos;s tiny model (two blocks, 16 wide, a 64-character vocabulary),
+          whose TypeScript is vendored unchanged into this site, with a
+          plain-Python port in{" "}
+          <a href={repoFile("reference/tiny.py")} className={A}>
+            reference/tiny.py
+          </a>
+          . It runs in your browser twice, as is and with its weights or its KV
+          cache quantised, and the pages compare the two over four prompts. Its
+          weights are random, rescaled from the explainer&apos;s so that its
+          blocks matter; its text is gibberish, its arithmetic real. A test
+          proves the hooked forward pass equals the explainer&apos;s exactly,
+          and the Python and TypeScript runs agree to a relative 10⁻¹² (they
+          share exp, log, sin, cos and tanh, which each language may round
+          differently in the last place) and exactly in every top prediction.
+        </p>
 
         <h2>How it is checked</h2>
         <ul>
@@ -172,6 +198,12 @@ export default function AboutPage(): JSX.Element {
           <li>
             The FP16 and BF16 sums round after every addition, as a scalar loop
             does; GPU kernels usually accumulate in FP32 and in their own order.
+          </li>
+          <li>
+            The layers of chapters 6 to 8 are generated; the tiny
+            transformer&apos;s weights are random; the KV-cache layouts are
+            simplified (one scale over the whole prompt for per-channel keys);
+            the energy figures are for a 45 nm process.
           </li>
         </ul>
 

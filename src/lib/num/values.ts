@@ -18,7 +18,27 @@ import {
 } from "@/lib/format";
 
 import {
+  KV_CONFIGS,
+  KV_ORDER,
+  WEIGHT_CONFIGS,
+  WEIGHT_ORDER,
+  margins,
+  run as tinyRun,
+} from "./tiny";
+import {
   FORMAT_ORDER,
+  HOROWITZ,
+  awqSearch,
+  demoLayer,
+  demoNormal,
+  demoOutlierLayer,
+  dotSteps,
+  gptqSteps,
+  nf4Build,
+  nf4VsInt4,
+  outlierSteps,
+  smoothSteps,
+  w8a8Error,
   INFO,
   MX_FORMATS,
   MX_ORDER,
@@ -61,6 +81,10 @@ export const DEMO = {
   weights: [16, 64, 5] as const,
   acts: [24, 8] as const,
   blockSeed: 5,
+  outlier: [8, 16, 32, 13] as const,
+  layer: [8, 16, 64, 21] as const,
+  normal: [4096, 17] as const,
+  dot: [5, 6] as const,
 } as const;
 
 /** delta = an eighth of an ulp at 1, per format, for the stagnation demo. */
@@ -173,6 +197,133 @@ function build(): Record<string, unknown> {
   const probe: Record<string, unknown> = {};
   for (const p of probeSteps()) probe[String(p.k)] = p.formats;
   t.probe = probe;
+
+  // Chapter 6
+  const ol = demoOutlierLayer(...DEMO.outlier);
+  const o = outlierSteps(ol.W, ol.X);
+  let amaxNormal = 0;
+  o.amax.forEach((a, i) => {
+    if (!o.outliers.includes(i) && a > amaxNormal) amaxNormal = a;
+  });
+  t.outlier = {
+    err_tensor: o.err_tensor,
+    err_vector: o.err_vector,
+    err_mixed: o.err_mixed,
+    normal_levels: o.normal_levels,
+    tensor_scale: o.tensor_scale,
+    amax_out: Math.max(...o.outliers.map((i) => o.amax[i]!)),
+    amax_normal: amaxNormal,
+    n_out: o.outliers.length,
+    channels: o.amax.length,
+    ratio: o.err_vector / o.err_mixed,
+    sqnr_tensor: sqnrDb(o.signal, o.err_tensor),
+    sqnr_mixed: sqnrDb(o.signal, o.err_mixed),
+  };
+  const sm = smoothSteps(ol.W, ol.X);
+  const base = w8a8Error(ol.W, ol.X).err;
+  let best = sm[0]!;
+  for (const x of sm) if (x.err < best.err) best = x;
+  t.smooth = {
+    base,
+    k0: sm[0]!.err,
+    k4: sm[4]!.err,
+    k8: sm[8]!.err,
+    gain4: base / sm[4]!.err,
+    best_alpha: best.alpha,
+    best_err: best.err,
+    best_gain: base / best.err,
+  };
+
+  // Chapter 7
+  const lay = demoLayer(...DEMO.layer);
+  const gq: Record<string, unknown> = {};
+  for (const b of [4, 3]) {
+    const last = gptqSteps(lay.W, lay.X, b).steps.at(-1)!;
+    gq[`b${b}`] = {
+      gptq: last.err_gptq,
+      rtn: last.err_rtn,
+      ratio: last.err_rtn / last.err_gptq,
+    };
+  }
+  t.gptq = gq;
+
+  // Chapter 8
+  const aw: Record<string, unknown> = {};
+  for (const b of [3, 4]) {
+    const r = awqSearch(lay.W, lay.X, b, 8);
+    const bestR = r.results[r.best]!;
+    aw[`b${b}`] = {
+      base: r.results[0]!.err,
+      best_alpha: bestR.alpha,
+      best: bestR.err,
+      ratio: r.results[0]!.err / bestR.err,
+    };
+  }
+  t.awq = aw;
+  const nb = nf4Build();
+  const ni = nf4VsInt4(demoNormal(...DEMO.normal));
+  t.nf4 = {
+    zmax: nb.max,
+    lowest: nb.values[0]!,
+    max_diff: nb.max_diff,
+    mse_nf4: ni.mse_nf4,
+    mse_int4: ni.mse_int4,
+    ratio: ni.mse_int4 / ni.mse_nf4,
+    sqnr_nf4: sqnrDb(ni.signal, ni.mse_nf4),
+    sqnr_int4: sqnrDb(ni.signal, ni.mse_int4),
+  };
+
+  // Chapters 8 and 9: the tiny model
+  const tiny: Record<string, unknown> = {};
+  for (const [target, order, cfgs] of [
+    ["weights", WEIGHT_ORDER, WEIGHT_CONFIGS],
+    ["kv", KV_ORDER, KV_CONFIGS],
+  ] as const) {
+    const byCfg: Record<string, unknown> = {};
+    for (const c of order) {
+      const r = tinyRun(target, c);
+      byCfg[c] = {
+        ...r.summary,
+        agree_frac: r.summary.agree / r.summary.n,
+        bits: (cfgs as Record<string, { bits: number }>)[c]!.bits,
+        mem: (cfgs as Record<string, { bits: number }>)[c]!.bits / 16,
+      };
+    }
+    tiny[target] = byCfg;
+  }
+  tiny.margins = margins(tinyRun("kv", "fp16").refs);
+  t.tiny = tiny;
+
+  // Chapter 10
+  const dr = dotSteps(
+    demoBlock("normal", DEMO.dot[0]),
+    demoBlock("normal", DEMO.dot[1]),
+  );
+  const last = dr.steps.at(-1)!;
+  const relOf = (v: number) => Math.abs(v - last.ref) / Math.abs(last.ref);
+  const n = dr.steps.length;
+  t.dot = {
+    n,
+    ref: last.ref,
+    fp32: last.fp32,
+    fp16: last.fp16,
+    int8: last.int8,
+    mx: last.mx,
+    rel_fp32: relOf(last.fp32),
+    rel_fp16: relOf(last.fp16),
+    rel_int8: relOf(last.int8),
+    rel_mx: relOf(last.mx),
+    pj_fp32: dr.pj.fp32,
+    pj_fp16: dr.pj.fp16,
+    pj_int8: dr.pj.int8,
+    e_fp32: n * dr.pj.fp32,
+    e_fp16: n * dr.pj.fp16,
+    e_int8: n * dr.pj.int8,
+    ratio_fp32_int8: dr.pj.fp32 / dr.pj.int8,
+  };
+  const hz: Record<string, unknown> = {};
+  for (const h of HOROWITZ) hz[h.id] = { pj: h.pj, um2: h.um2 ?? "–" };
+  t.hz = hz;
   return t;
 }
 
