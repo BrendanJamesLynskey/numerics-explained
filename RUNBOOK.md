@@ -37,7 +37,7 @@ It fetches every page and fails on any non-200 (redirects included) or on a
 page without the content that proves it rendered from the library: the
 landing page's E4M3 maximum and the formats page's constants (computed by
 the smoke script with the same library code), every chapter's MDX (a layer,
-server-rendered KaTeX and the animation's placeholder), and the seven-way
+server-rendered KaTeX and the animation's placeholder), and the two-group
 site switch with Numerics current. Then open
 one chapter in a browser and press **Play**, step and scrub: the animations
 run client-side, which the smoke check can't see. With reduce-motion set in

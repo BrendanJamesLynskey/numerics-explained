@@ -15,7 +15,7 @@
  * and the formats page must print the library's own numbers (computed here
  * with the same code), every chapter must render its MDX (a layer, server-
  * rendered KaTeX and the animation's placeholder), and the header must
- * carry the seven-way site switch with Numerics current.
+ * carry the two-group site switch with Numerics current.
  */
 import { exact } from "@/lib/format";
 import { INFO } from "@/lib/num/model";
@@ -28,7 +28,8 @@ const headers: Record<string, string> = process.env.VERCEL_BYPASS
   : {};
 
 const SWITCH = [
-  'aria-label="Companion sites"',
+  'data-site-switch="full"',
+  'href="https://agent-harnesses-explained.vercel.app"',
   'href="https://numerics-explained.vercel.app"',
   'data-site-switch="compact"',
 ];
