@@ -82,5 +82,6 @@ The inputs are FP16 numbers from a seeded generator, so their exact running sums
 - Google TPU series: [Accumulator widths and numerical stability](https://brendanjameslynskey.github.io/Google_TPU_09_Memory_and_Numerics/#slide-09).
 - Linear Algebra for AI series: [The dot product three ways](https://brendanjameslynskey.github.io/Linear_Algebra_AI_04_Inner_Products_and_Norms/#slide-01).
 - Kahan, [Further remarks on reducing truncation errors](https://doi.org/10.1145/363707.363723) (1965); Higham, [The accuracy of floating point summation](https://doi.org/10.1137/0914050) (1993); [numpy.sum](https://numpy.org/doc/stable/reference/generated/numpy.sum.html) (notes on pairwise summation).
+- New to training? [Training, chapter 9: mixed precision](https://transformer-training-explained.vercel.app/training/09-mixed-precision) (Part 2 of the Transformer Decoder Explainer): why the optimiser keeps an FP32 master copy of the weights, because an update smaller than half the BF16 spacing at a weight is rounded away.
 
 </Callout>
