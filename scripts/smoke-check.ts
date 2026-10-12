@@ -15,7 +15,7 @@
  * and the formats page must print the library's own numbers (computed here
  * with the same code), every chapter must render its MDX (a layer, server-
  * rendered KaTeX and the animation's placeholder), and the header must
- * carry the two-group site switch with Numerics current.
+ * carry the three-group site switch with Numerics current.
  */
 import { exact } from "@/lib/format";
 import { INFO } from "@/lib/num/model";
@@ -33,6 +33,8 @@ const SWITCH = [
   'href="https://agent-protocols-explained.vercel.app"',
   'href="https://agent-context-explained.vercel.app"',
   'href="https://compute-in-transit-results.vercel.app"',
+  'href="https://agent-orchestration-explained.vercel.app"',
+  'data-site-group="training"',
   'href="https://numerics-explained.vercel.app"',
   'data-site-switch="compact"',
 ];
