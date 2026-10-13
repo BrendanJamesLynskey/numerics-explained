@@ -20,11 +20,12 @@ shows how a GPU runs the maths, this site is about the numbers
 themselves, [Systolic Arrays Explained](https://systolic-arrays-explained.vercel.app/)
 is the silicon underneath, and [Inference Trade-offs Explained](https://inference-tradeoffs-explained.vercel.app/)
 measures which serving lever (FP8 and INT4 among them) helps which metric.
-They share one design system and link to each other from the header, in three groups:
-"Inference" (Decoder · Inference · Architectures · Kernels · Numerics ·
-Silicon · Trade-offs), "Training" (Training, the second part of the decoder
-site, marked "soon", and
-[Compute in transit](https://compute-in-transit-results.vercel.app/)) and "Agents", which starts with
+They share one design system and link to each other from the header, in four tracks, and the
+header always shows where you are ("Track › Site"): "Foundations" (Decoder ·
+Training: one small model, end to end), "Hardware" (Kernels · Silicon · Racks,
+soon: the machines underneath, chip to rack), "Inference" (Serving ·
+Architectures · Numerics · Trade-offs; Serving is LLM Inference Explained) and
+"Agents", which starts with
 [Agent Harnesses Explained](https://agent-harnesses-explained.vercel.app/)
 (the loop, tools, context and permissions that turn a model into an agent;
 then [Agent Protocols Explained](https://agent-protocols-explained.vercel.app/),
@@ -247,7 +248,7 @@ at commit `7242143`, which copied it from the other companion sites:
 | Here                                                                                                                                               | From                                                                               |
 | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `tailwind.config.ts`, `src/app/globals.css`, `src/app/layout.tsx`                                                                                  | identical apart from titles; `globals.css` has this site's equation-highlight keys |
-| `src/components/ui/SiteHeader.tsx`, `SiteSwitch.tsx`                                                                                               | the same header and three-group switch, with Numerics live                         |
+| `src/components/ui/SiteHeader.tsx`, `SiteSwitch.tsx`                                                                                               | the same header and four-track switch, with Numerics live                          |
 | `src/components/anim/`, `src/lib/anim/clock.ts`, `src/components/viz/useSvgFont.ts`, `src/components/mdx/Eq.tsx`                                   | unchanged                                                                          |
 | `src/lib/viz/palette.ts`                                                                                                                           | the family palette, plus this site's bit-field and method colours                  |
 | `src/app/learn/`, `src/lib/mdx/`, `Layer.tsx`, `LayerToggle.tsx`, `MdxTable.tsx`, `Controls.tsx`, `Callout.tsx`                                    | copied                                                                             |
