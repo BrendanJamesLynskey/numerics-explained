@@ -21,6 +21,13 @@ import { exact } from "@/lib/format";
 import { INFO } from "@/lib/num/model";
 import { SECTIONS } from "@/lib/mdx/sections";
 
+/** The author credit: the last line of the About page (brief 35). */
+const CREDIT = [
+  'data-author-credit="true"',
+  "Written and built by",
+  'href="https://github.com/BrendanJamesLynskey">Brendan Lynskey</a>',
+];
+
 type Result = { path: string; ok: boolean; detail: string };
 
 const headers: Record<string, string> = process.env.VERCEL_BYPASS
@@ -82,7 +89,7 @@ async function main(): Promise<void> {
       exact(INFO.e5m2.max),
       exact(INFO.fp16.max),
     ]),
-    checkPage(base, "/about", ["The numerics library"]),
+    checkPage(base, "/about", [...CREDIT, "The numerics library"]),
     checkPage(
       base,
       "/learn",
