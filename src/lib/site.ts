@@ -18,6 +18,12 @@ export const TRADEOFFS_URL = "https://inference-tradeoffs-explained.vercel.app";
 export const GITHUB_URL =
   "https://github.com/BrendanJamesLynskey/numerics-explained";
 
+/** The author, credited in one quiet line at the foot of the About page. */
+export const AUTHOR = {
+  name: "Brendan Lynskey",
+  url: "https://github.com/BrendanJamesLynskey",
+} as const;
+
 /** The slide series the chapters link into ("go deeper"). */
 export const LOCAL_LLM_HUB =
   "https://brendanjameslynskey.github.io/LLM_Hub_Local_LLM_Hosting/";
