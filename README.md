@@ -22,7 +22,7 @@ is the silicon underneath, and [Inference Trade-offs Explained](https://inferenc
 measures which serving lever (FP8 and INT4 among them) helps which metric.
 They share one design system and link to each other from the header, in four tracks, and the
 header always shows where you are ("Track › Site"): "Foundations" (Decoder ·
-Training: one small model, end to end), "Hardware" (Kernels · Silicon · Racks:
+Training: one small model, end to end), "Hardware" (Kernels · Systolic · Accelerators · Racks:
 the machines underneath, chip to rack), "Inference" (Serving ·
 Architectures · Numerics · Trade-offs; Serving is LLM Inference Explained) and
 "Agents", which starts with
