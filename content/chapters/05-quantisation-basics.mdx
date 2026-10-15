@@ -9,7 +9,7 @@
 
 A floating-point format spends some of its bits on an exponent so that every value carries its own scale. **Integer quantisation** takes the opposite route: store each weight as a small integer, $-7$ to $7$ for INT4, and keep **one scale for a whole group** of weights. The integer grid is uniform, so it wastes nothing on range it does not need, but its step is set by the largest value in the group.
 
-The simplest choice is **absmax**: the scale is the group's largest magnitude divided by $2^{b-1} - 1$, so the largest weight lands exactly on the top code, zero is exactly representable, and everything else is rounded to the nearest step. The question is how big a group shares a scale.
+The simplest choice is **absmax**: the scale is the group's largest magnitude divided by $2^{b-1} - 1$, so the largest weight lands exactly on the top code, zero is exactly representable, and everything else is rounded to the nearest step. This is the restricted range $\pm(2^{b-1} - 1)$: two's complement also has the code $-2^{b-1}$ ($-8$ for INT4), which a symmetric quantiser leaves unused so the grid is symmetric about zero; some kernels use the full range instead. [Serving](https://llm-inference-explained.vercel.app/learn/08-quantisation) and [Training](https://transformer-training-explained.vercel.app/training/09-mixed-precision) use the restricted range too. The question is how big a group shares a scale.
 
 The animation quantises one weight matrix (16 output channels by 64 inputs, illustrative) to INT4 five times:
 

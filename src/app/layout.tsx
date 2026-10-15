@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s · Numerics Explained",
   },
   description:
-    "Number formats, rounding and quantisation for machine learning: FP8, MX and 4-bit formats, stochastic rounding, accumulation error and quantisers, each animated by a bit-exact numerics library.",
+    "Number formats, rounding and quantisation for machine learning: FP8, MX and 4-bit formats, stochastic rounding, accumulation error, quantisers, outliers, GPTQ, AWQ and NF4, the KV cache and the hardware, each animated by a bit-exact numerics library.",
 };
 
 export default function RootLayout({
