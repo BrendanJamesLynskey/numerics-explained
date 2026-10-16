@@ -4,6 +4,10 @@
  * 1e-12 for logits and drifts, which pass through exp, log, sin, cos and
  * tanh; exactly for top tokens and agreement counts).
  */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import fx from "../fixtures/tiny_fixtures.json";
@@ -142,6 +146,14 @@ describe("tiny model", () => {
 
 describe("tiny model, trained (brief 41)", () => {
   const w = trainedModelWeights();
+  it("is transformer-explainer's file, byte for byte (README's vendoring table)", () => {
+    const bytes = readFileSync(
+      join(process.cwd(), "public/data/trained-weights.json"),
+    );
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      "bd44e460d138725569c3586b7dba288d4959e598cba99e84cb5062698ca89972",
+    );
+  });
   it("is provided once, by the server's import (the browser fetches it)", () => {
     expect(hasTrainedWeights()).toBe(true);
     provideTrainedWeights({ params: {}, steps: 0 }); // a second file is ignored

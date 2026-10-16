@@ -16,3 +16,6 @@ tests/fixtures/
 src/data/
 .lighthouseci/
 .venv/
+
+# Vendored byte for byte from transformer-explainer (brief 41): the trained weights.
+public/data/
