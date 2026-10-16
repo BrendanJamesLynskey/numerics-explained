@@ -14,6 +14,14 @@
  * Python may round differently in the last place, so the fixtures are
  * matched to a relative 1e-12 (and exactly for every discrete result: top
  * tokens and agreement counts).
+ *
+ * Since brief 41 the chapters default to the trained model: the same
+ * architecture after Training's default run on Alice's Adventures in
+ * Wonderland (the Decoder site's weights, vendored as
+ * public/data/trained-weights.json), run on 16 eight-character prompts from
+ * the corpus's held-out split. Every function takes a `model` ("trained" or
+ * "random"); "random" (the default argument) is the original model and its
+ * fixtures are unchanged.
  */
 import {
   singleHeadAttention,
@@ -27,11 +35,16 @@ import { ffn } from "@/lib/transformer/ffn";
 import { initModelWeights } from "@/lib/transformer/init";
 import { layernormRows } from "@/lib/transformer/layernorm";
 import { matmul, transpose } from "@/lib/transformer/matmul";
-import type { ModelConfig, ModelWeights } from "@/lib/transformer/model";
+import {
+  unpackWeights,
+  type ModelConfig,
+  type ModelWeights,
+} from "@/lib/transformer/model";
 import { addMat } from "@/lib/transformer/tensor";
 import { ALPHABET } from "@/lib/transformer/tokenizer";
 
 import tinyData from "@/data/tiny.json";
+import trainedData from "@/data/tiny_trained.json";
 
 import {
   INFO,
@@ -53,6 +66,25 @@ type Mat = number[][];
 export const TINY_CONFIG: ModelConfig = tinyData.config;
 export const PROMPTS: readonly string[] = tinyData.prompts;
 export const CALIB: readonly string[] = tinyData.calib;
+
+/** Which weights the chapters quantise. */
+export type TinyModel = "trained" | "random";
+export const TINY_MODELS: readonly TinyModel[] = ["trained", "random"];
+
+/** The trained model's config (8-character context), prompts and calibration prompts. */
+export const TRAINED_CONFIG: ModelConfig = trainedData.config;
+export const TRAINED_PROMPTS: readonly string[] = trainedData.prompts;
+export const TRAINED_CALIB: readonly string[] = trainedData.calib;
+
+/** The prompts a model is measured on. */
+export function promptsOf(m: TinyModel): readonly string[] {
+  return m === "trained" ? TRAINED_PROMPTS : PROMPTS;
+}
+
+/** The prompts a model's GPTQ calibrates on. */
+export function calibOf(m: TinyModel): readonly string[] {
+  return m === "trained" ? TRAINED_CALIB : CALIB;
+}
 export const LINEARS = ["W_q", "W_k", "W_v", "W_o", "W1", "W2"] as const;
 export type LinearName = (typeof LINEARS)[number];
 export const EMB_GAIN = 1 / 0.02;
@@ -85,6 +117,42 @@ export function tokenLabel(id: number): string {
 }
 
 let cached: ModelWeights | null = null;
+let cachedTrained: ModelWeights | null = null;
+
+/** The trained weights' file (public/data/trained-weights.json). */
+export const TRAINED_WEIGHTS_URL = "/data/trained-weights.json";
+export type TrainedWeightsFile = {
+  params: Record<string, Mat | number[]>;
+  steps: number;
+};
+let trainedFile: TrainedWeightsFile | null = null;
+
+/**
+ * Hand the trained weights to the library. They are not bundled (110 kB of
+ * doubles would ride along with every widget that imports this file): the
+ * server imports them (`trained-data.ts`), the browser fetches them.
+ */
+export function provideTrainedWeights(file: TrainedWeightsFile): void {
+  if (!trainedFile) trainedFile = file;
+}
+
+/** Whether the trained weights have been provided. */
+export function hasTrainedWeights(): boolean {
+  return trainedFile !== null;
+}
+
+/** Training's trained weights (reference: trained_weights). */
+export function trainedModelWeights(): ModelWeights {
+  if (!trainedFile)
+    throw new Error("tiny: the trained weights are not loaded yet");
+  cachedTrained ??= unpackWeights(trainedFile.params, TRAINED_CONFIG);
+  return cachedTrained;
+}
+
+/** A model's weights. */
+export function weightsOf(m: TinyModel): ModelWeights {
+  return m === "trained" ? trainedModelWeights() : modelWeights();
+}
 
 /** The explainer's weights, rescaled (reference: model_weights). */
 export function modelWeights(): ModelWeights {
@@ -176,9 +244,10 @@ export function forward(
   cap?: Capture,
 ): Mat {
   const cfg = TINY_CONFIG;
+  // prompts are a model's full context: 32 characters (random), 8 (trained)
   let x = addMat(
     tokenEmbedding(ids, w.tok_emb),
-    positionalEncoding(cfg.seq_len, cfg.d_model),
+    positionalEncoding(ids.length, cfg.d_model),
   );
   w.blocks.forEach((b, li) => {
     const ln1 = layernormRows(x, b.ln1.gamma, b.ln1.beta);
@@ -266,9 +335,12 @@ function fqFp8(W: Mat): Mat {
 export type Calibration = Record<LinearName, Mat[]>;
 
 /** Each linear layer's inputs over the calibration prompts, as X [d_in, n] (reference: calibration). */
-export function calibration(w: ModelWeights): Calibration {
+export function calibration(
+  w: ModelWeights,
+  m: TinyModel = "random",
+): Calibration {
   return calibrationFrom(
-    CALIB.map((p) => {
+    calibOf(m).map((p) => {
       const cap: Capture = {};
       forward(encodeText(p), w, undefined, cap);
       return cap;
@@ -483,9 +555,9 @@ export type TinyRun = {
 
 // Caches, so a widget can compute a run in small pieces (one forward pass
 // per task) and keep the page responsive: see `pendingTasks`.
-const refCache = new Map<number, Mat>();
-const capCache = new Map<number, Capture>();
-const wqCache = new Map<WeightCfg, ModelWeights>();
+const refCache = new Map<string, Mat>();
+const capCache = new Map<string, Capture>();
+const wqCache = new Map<string, ModelWeights>();
 const qCache = new Map<string, Mat>();
 const runCache = new Map<string, TinyRun>();
 
@@ -499,37 +571,46 @@ export function clearCaches(): void {
 }
 
 /** The reference logits of prompt p. */
-export function refLogits(p: number): Mat {
-  let r = refCache.get(p);
+export function refLogits(p: number, m: TinyModel = "random"): Mat {
+  const key = `${m}|${p}`;
+  let r = refCache.get(key);
   if (!r) {
-    r = forward(encodeText(PROMPTS[p]!), modelWeights());
-    refCache.set(p, r);
+    r = forward(encodeText(promptsOf(m)[p]!), weightsOf(m));
+    refCache.set(key, r);
   }
   return r;
 }
 
 /** The linear layers' inputs for calibration prompt i. */
-export function calibrationCapture(i: number): Capture {
-  let c = capCache.get(i);
+export function calibrationCapture(
+  i: number,
+  m: TinyModel = "random",
+): Capture {
+  const key = `${m}|${i}`;
+  let c = capCache.get(key);
   if (!c) {
     c = {};
-    forward(encodeText(CALIB[i]!), modelWeights(), undefined, c);
-    capCache.set(i, c);
+    forward(encodeText(calibOf(m)[i]!), weightsOf(m), undefined, c);
+    capCache.set(key, c);
   }
   return c;
 }
 
 /** The model's weights quantised to one format (cached). */
-export function quantisedWeights(cfg: WeightCfg): ModelWeights {
-  let wq = wqCache.get(cfg);
+export function quantisedWeights(
+  cfg: WeightCfg,
+  m: TinyModel = "random",
+): ModelWeights {
+  const key = `${m}|${cfg}`;
+  let wq = wqCache.get(key);
   if (!wq) {
-    const w = modelWeights();
+    const w = weightsOf(m);
     const calib =
       cfg === "gptq3_ch"
-        ? calibrationFrom(CALIB.map((_, i) => calibrationCapture(i)))
+        ? calibrationFrom(calibOf(m).map((_, i) => calibrationCapture(i, m)))
         : undefined;
     wq = quantiseWeights(w, cfg, calib);
-    wqCache.set(cfg, wq);
+    wqCache.set(key, wq);
   }
   return wq;
 }
@@ -539,15 +620,16 @@ export function quantLogits(
   target: TinyTarget,
   cfg: WeightCfg | KvCfg,
   p: number,
+  m: TinyModel = "random",
 ): Mat {
-  const key = `${target}|${cfg}|${p}`;
+  const key = `${m}|${target}|${cfg}|${p}`;
   let q = qCache.get(key);
   if (!q) {
-    const ids = encodeText(PROMPTS[p]!);
+    const ids = encodeText(promptsOf(m)[p]!);
     q =
       target === "weights"
-        ? forward(ids, quantisedWeights(cfg as WeightCfg))
-        : forward(ids, modelWeights(), kvHook(cfg as KvCfg));
+        ? forward(ids, quantisedWeights(cfg as WeightCfg, m))
+        : forward(ids, weightsOf(m), kvHook(cfg as KvCfg));
     qCache.set(key, q);
   }
   return q;
@@ -561,36 +643,44 @@ export function quantLogits(
 export function pendingTasks(
   target: TinyTarget,
   cfg: WeightCfg | KvCfg,
+  m: TinyModel = "random",
 ): (() => unknown)[] {
   const out: (() => unknown)[] = [];
-  PROMPTS.forEach((_, p) => {
-    if (!refCache.has(p)) out.push(() => refLogits(p));
+  const prompts = promptsOf(m);
+  prompts.forEach((_, p) => {
+    if (!refCache.has(`${m}|${p}`)) out.push(() => refLogits(p, m));
   });
   if (target === "weights") {
     const c = cfg as WeightCfg;
-    if (!wqCache.has(c)) {
+    if (!wqCache.has(`${m}|${c}`)) {
       if (c === "gptq3_ch")
-        CALIB.forEach((_, i) => {
-          if (!capCache.has(i)) out.push(() => calibrationCapture(i));
+        calibOf(m).forEach((_, i) => {
+          if (!capCache.has(`${m}|${i}`))
+            out.push(() => calibrationCapture(i, m));
         });
-      out.push(() => quantisedWeights(c));
+      out.push(() => quantisedWeights(c, m));
     }
   }
-  PROMPTS.forEach((_, p) => {
-    if (!qCache.has(`${target}|${cfg}|${p}`))
-      out.push(() => quantLogits(target, cfg, p));
+  prompts.forEach((_, p) => {
+    if (!qCache.has(`${m}|${target}|${cfg}|${p}`))
+      out.push(() => quantLogits(target, cfg, p, m));
   });
   return out;
 }
 
 /** Every prompt through the reference and the quantised model (reference: run). */
-export function run(target: TinyTarget, cfg: WeightCfg | KvCfg): TinyRun {
-  const key = `${target}|${cfg}`;
+export function run(
+  target: TinyTarget,
+  cfg: WeightCfg | KvCfg,
+  m: TinyModel = "random",
+): TinyRun {
+  const key = `${m}|${target}|${cfg}`;
   const hit = runCache.get(key);
   if (hit) return hit;
-  const ids = PROMPTS.map(encodeText);
-  const refs = PROMPTS.map((_, p) => refLogits(p));
-  const qs = PROMPTS.map((_, p) => quantLogits(target, cfg, p));
+  const prompts = promptsOf(m);
+  const ids = prompts.map(encodeText);
+  const refs = prompts.map((_, p) => refLogits(p, m));
+  const qs = prompts.map((_, p) => quantLogits(target, cfg, p, m));
   const out = {
     summary: summarise(refs, qs),
     steps: refs.map((r, p) => tinySteps(r, qs[p]!, ids[p]!)),

@@ -27,6 +27,7 @@ import {
   isValidSlug,
   readSectionMdx,
 } from "@/lib/mdx/sections";
+import { TRAINED_WEIGHTS_URL } from "@/lib/num/tiny";
 import { withShare } from "@/lib/share";
 
 import "katex/dist/katex.min.css";
@@ -95,8 +96,20 @@ export default async function SectionPage({
   const prev = idx > 0 ? SECTIONS[idx - 1] : null;
   const next = idx < SECTIONS.length - 1 ? SECTIONS[idx + 1] : null;
 
+  // chapters with the tiny model: start fetching its trained weights with
+  // the page, not after the widget's chunk has loaded (brief 41)
+  const tiny = mdx.includes("<TinyWidget");
+
   return (
     <article className="mx-auto max-w-3xl px-6 py-10">
+      {tiny && (
+        <link
+          rel="preload"
+          href={TRAINED_WEIGHTS_URL}
+          as="fetch"
+          crossOrigin="anonymous"
+        />
+      )}
       <div className="flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <Link

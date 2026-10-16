@@ -39,24 +39,26 @@ The scale is $s_i = \overline{|x_i|}^{\alpha}$, and AWQ searches $\alpha \in [0,
 
 <Layer kind="concept">
 
-Now a real network. The animation above runs the **Transformer Decoder Explainer's tiny transformer** (two blocks, 16-wide, two heads, a 64-character vocabulary) in your browser, twice: once as is, once with the weights of every block's six linear layers quantised. It predicts the next character at all 32 positions of four prompts, and compares. The weights are random, so the text is gibberish, but every multiply is real.
+Now a real network. The animation above runs the **Transformer Decoder Explainer's tiny transformer** (two blocks, 16-wide, two heads, a 64-character vocabulary) in your browser, twice: once as is, once with the weights of every block's six linear layers quantised. By default it runs the model as the [Training site](https://transformer-training-explained.vercel.app/training) leaves it, trained on _Alice's Adventures in Wonderland_, so its predictions are real guesses at the next letter. It predicts the next character at all 8 positions of 16 prompts cut from the part of the book it never trained on, and compares.
 
 Over the 128 predictions, with the token embedding (and the tied output head) kept at full precision:
 
-| Weights               | bits per weight                       | logit drift                            | top prediction unchanged                               |
-| --------------------- | ------------------------------------- | -------------------------------------- | ------------------------------------------------------ |
-| INT8 per channel      | <V of="tiny.weights.int8_ch.bits" />  | <V of="tiny.weights.int8_ch.drift" />  | <V of="tiny.weights.int8_ch.agree" fmt="int" /> of 128 |
-| FP8 E4M3 per channel  | <V of="tiny.weights.fp8_ch.bits" />   | <V of="tiny.weights.fp8_ch.drift" />   | <V of="tiny.weights.fp8_ch.agree" fmt="int" />         |
-| INT4 per channel      | <V of="tiny.weights.int4_ch.bits" />  | <V of="tiny.weights.int4_ch.drift" />  | <V of="tiny.weights.int4_ch.agree" fmt="int" />        |
-| INT4 groups of 8      | <V of="tiny.weights.int4_g8.bits" />  | <V of="tiny.weights.int4_g8.drift" />  | <V of="tiny.weights.int4_g8.agree" fmt="int" />        |
-| INT4 blocks of 64     | <V of="tiny.weights.int4_b64.bits" /> | <V of="tiny.weights.int4_b64.drift" /> | <V of="tiny.weights.int4_b64.agree" fmt="int" />       |
-| NF4 blocks of 64      | <V of="tiny.weights.nf4.bits" />      | <V of="tiny.weights.nf4.drift" />      | <V of="tiny.weights.nf4.agree" fmt="int" />            |
-| MXFP4 blocks of 32    | <V of="tiny.weights.mxfp4.bits" />    | <V of="tiny.weights.mxfp4.drift" />    | <V of="tiny.weights.mxfp4.agree" fmt="int" />          |
-| INT3 per channel      | <V of="tiny.weights.int3_ch.bits" />  | <V of="tiny.weights.int3_ch.drift" />  | <V of="tiny.weights.int3_ch.agree" fmt="int" />        |
-| GPTQ INT3 per channel | <V of="tiny.weights.gptq3_ch.bits" /> | <V of="tiny.weights.gptq3_ch.drift" /> | <V of="tiny.weights.gptq3_ch.agree" fmt="int" />       |
-| INT3 groups of 8      | <V of="tiny.weights.int3_g8.bits" />  | <V of="tiny.weights.int3_g8.drift" />  | <V of="tiny.weights.int3_g8.agree" fmt="int" />        |
+| Weights               | bits per weight                       | logit drift                                    | top prediction unchanged                                       |
+| --------------------- | ------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------- |
+| INT8 per channel      | <V of="tiny.weights.int8_ch.bits" />  | <V of="tiny.trained.weights.int8_ch.drift" />  | <V of="tiny.trained.weights.int8_ch.agree" fmt="int" /> of 128 |
+| FP8 E4M3 per channel  | <V of="tiny.weights.fp8_ch.bits" />   | <V of="tiny.trained.weights.fp8_ch.drift" />   | <V of="tiny.trained.weights.fp8_ch.agree" fmt="int" />         |
+| INT4 per channel      | <V of="tiny.weights.int4_ch.bits" />  | <V of="tiny.trained.weights.int4_ch.drift" />  | <V of="tiny.trained.weights.int4_ch.agree" fmt="int" />        |
+| INT4 groups of 8      | <V of="tiny.weights.int4_g8.bits" />  | <V of="tiny.trained.weights.int4_g8.drift" />  | <V of="tiny.trained.weights.int4_g8.agree" fmt="int" />        |
+| INT4 blocks of 64     | <V of="tiny.weights.int4_b64.bits" /> | <V of="tiny.trained.weights.int4_b64.drift" /> | <V of="tiny.trained.weights.int4_b64.agree" fmt="int" />       |
+| NF4 blocks of 64      | <V of="tiny.weights.nf4.bits" />      | <V of="tiny.trained.weights.nf4.drift" />      | <V of="tiny.trained.weights.nf4.agree" fmt="int" />            |
+| MXFP4 blocks of 32    | <V of="tiny.weights.mxfp4.bits" />    | <V of="tiny.trained.weights.mxfp4.drift" />    | <V of="tiny.trained.weights.mxfp4.agree" fmt="int" />          |
+| INT3 per channel      | <V of="tiny.weights.int3_ch.bits" />  | <V of="tiny.trained.weights.int3_ch.drift" />  | <V of="tiny.trained.weights.int3_ch.agree" fmt="int" />        |
+| GPTQ INT3 per channel | <V of="tiny.weights.gptq3_ch.bits" /> | <V of="tiny.trained.weights.gptq3_ch.drift" /> | <V of="tiny.trained.weights.gptq3_ch.agree" fmt="int" />       |
+| INT3 groups of 8      | <V of="tiny.weights.int3_g8.bits" />  | <V of="tiny.trained.weights.int3_g8.drift" />  | <V of="tiny.trained.weights.int3_g8.agree" fmt="int" />        |
 
-Three lessons survive the model's smallness. Each bit removed roughly doubles the drift or more. With the same blocks of 64, NF4's grid beats INT4's, because these weights are normal. And GPTQ, calibrated on four other prompts, recovers part of what plain INT3 rounding loses. Pick a format and a prompt above and watch where predictions flip: they flip where the reference's top two candidates were close, and the reference's median gap between them is <V of="tiny.margins.median_gap" /> logits.
+Three lessons survive the model's smallness. Each bit removed roughly doubles the drift or more. With the same blocks of 64, NF4's grid beats INT4's, because these weights are close to normal. And GPTQ, calibrated on 16 other windows of the book, recovers part of what plain INT3 rounding loses. Pick a format and a prompt above and watch where predictions flip: they flip where the reference's top two candidates were close, and the reference's median gap between them is <V of="tiny.trained.margins.median_gap" /> logits.
+
+Switch the widget's weights to **random init** to see the model before training, on four 32-character prompts: every format drifts more there (INT4 per channel <V of="tiny.weights.int4_ch.drift" /> against <V of="tiny.trained.weights.int4_ch.drift" />, INT3 per channel <V of="tiny.weights.int3_ch.drift" /> against <V of="tiny.trained.weights.int3_ch.drift" />), and its outputs are gibberish, so a flipped prediction means little. The trained model is the one whose predictions are worth keeping.
 
 </Layer>
 
@@ -89,7 +91,7 @@ s = s.map((v) => v / norm);
 
 <Callout kind="illustrative">
 
-The tiny model is the [Transformer Decoder Explainer](https://transformer-decoder-explained.vercel.app)'s, vendored unchanged from its repository; its weights are random. The explainer draws every matrix from $N(0, 0.02)$, which leaves its blocks nearly silent beside the residual stream, so this site rescales the same draws: each linear layer to standard deviation $1/\sqrt{\text{fan-in}}$ and the embedding to $N(0, 1)$. Per-channel and per-group bit counts assume a 16-input channel and FP16 scales. AWQ here searches eighths of $\alpha$ (the paper's search uses a grid of 20) and has no clipping search. A real model's numbers differ; the orderings are the point.
+The tiny model is the [Transformer Decoder Explainer](https://transformer-decoder-explained.vercel.app)'s, vendored unchanged from its repository. By default it runs the weights the Training site's default run ends with (one public-domain book, an 8-character context; vendored as `public/data/trained-weights.json`): a tiny model that has learned letter statistics, not language. Its random-init alternative is the explainer's $N(0, 0.02)$ draws, which leave its blocks nearly silent beside the residual stream, so this site rescales them: each linear layer to standard deviation $1/\sqrt{\text{fan-in}}$ and the embedding to $N(0, 1)$. Per-channel and per-group bit counts assume a 16-input channel and FP16 scales. AWQ here searches eighths of $\alpha$ (the paper's search uses a grid of 20) and has no clipping search. A real model's numbers differ; the orderings are the point.
 
 </Callout>
 

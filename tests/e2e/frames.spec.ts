@@ -7,6 +7,7 @@ import { expect, test, type Locator } from "@playwright/test";
 
 import fx from "../fixtures/num_fixtures.json";
 import tfx from "../fixtures/tiny_fixtures.json";
+import trfx from "../fixtures/tiny_trained_fixtures.json";
 
 import {
   granCaption,
@@ -272,9 +273,41 @@ test("AWQ: INT3 then INT4", async ({ page }) => {
   }
 });
 
-test("tiny model: NF4 weights, then INT2 KV cache", async ({ page }) => {
+test("tiny model, trained (the default): NF4 weights, then INT2 KV cache", async ({
+  page,
+}) => {
   await page.goto("/learn/08-awq-and-nf4");
   const fw = page.getByTestId("tiny-weights-widget");
+  await expect(fw.getByTestId("model")).toHaveValue("trained");
+  const w = trfx.runs.weights.nf4.steps0 as TinyStep[];
+  for (const s of [0, 3, 7]) {
+    await show(fw, s);
+    await expect(caption(fw)).toHaveText(
+      tinyCaption(w[s]!, 8, WEIGHT_CONFIGS.nf4.label),
+    );
+  }
+  await page.goto("/learn/09-kv-cache");
+  const fk = page.getByTestId("tiny-kv-widget");
+  await change(fk, async () => {
+    await fk.getByTestId("format").selectOption("int2_tok");
+  });
+  const k = trfx.runs.kv.int2_tok.steps0 as TinyStep[];
+  for (const s of [0, 3, 7]) {
+    await show(fk, s);
+    await expect(caption(fk)).toHaveText(
+      tinyCaption(k[s]!, 8, KV_CONFIGS.int2_tok.label),
+    );
+  }
+});
+
+test("tiny model, random init: NF4 weights, then INT2 KV cache", async ({
+  page,
+}) => {
+  await page.goto("/learn/08-awq-and-nf4");
+  const fw = page.getByTestId("tiny-weights-widget");
+  await change(fw, async () => {
+    await fw.getByTestId("model").selectOption("random");
+  });
   const w = tfx.runs.weights.nf4.steps0 as TinyStep[];
   for (const s of [0, 15, 31]) {
     await show(fw, s);
@@ -284,6 +317,9 @@ test("tiny model: NF4 weights, then INT2 KV cache", async ({ page }) => {
   }
   await page.goto("/learn/09-kv-cache");
   const fk = page.getByTestId("tiny-kv-widget");
+  await change(fk, async () => {
+    await fk.getByTestId("model").selectOption("random");
+  });
   await change(fk, async () => {
     await fk.getByTestId("format").selectOption("int2_tok");
   });

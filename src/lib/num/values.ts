@@ -24,6 +24,7 @@ import {
   WEIGHT_ORDER,
   margins,
   run as tinyRun,
+  type TinyModel,
 } from "./tiny";
 import {
   FORMAT_ORDER,
@@ -273,25 +274,31 @@ function build(): Record<string, unknown> {
     sqnr_int4: sqnrDb(ni.signal, ni.mse_int4),
   };
 
-  // Chapters 8 and 9: the tiny model
-  const tiny: Record<string, unknown> = {};
-  for (const [target, order, cfgs] of [
-    ["weights", WEIGHT_ORDER, WEIGHT_CONFIGS],
-    ["kv", KV_ORDER, KV_CONFIGS],
-  ] as const) {
-    const byCfg: Record<string, unknown> = {};
-    for (const c of order) {
-      const r = tinyRun(target, c);
-      byCfg[c] = {
-        ...r.summary,
-        agree_frac: r.summary.agree / r.summary.n,
-        bits: (cfgs as Record<string, { bits: number }>)[c]!.bits,
-        mem: (cfgs as Record<string, { bits: number }>)[c]!.bits / 16,
-      };
+  // Chapters 8 and 9: the tiny model. `tiny.*` is the random model,
+  // `tiny.trained.*` the trained one (brief 41: the chapters' default).
+  const tinyOf = (m: TinyModel): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [target, order, cfgs] of [
+      ["weights", WEIGHT_ORDER, WEIGHT_CONFIGS],
+      ["kv", KV_ORDER, KV_CONFIGS],
+    ] as const) {
+      const byCfg: Record<string, unknown> = {};
+      for (const c of order) {
+        const r = tinyRun(target, c, m);
+        byCfg[c] = {
+          ...r.summary,
+          agree_frac: r.summary.agree / r.summary.n,
+          bits: (cfgs as Record<string, { bits: number }>)[c]!.bits,
+          mem: (cfgs as Record<string, { bits: number }>)[c]!.bits / 16,
+        };
+      }
+      out[target] = byCfg;
     }
-    tiny[target] = byCfg;
-  }
-  tiny.margins = margins(tinyRun("kv", "fp16").refs);
+    out.margins = margins(tinyRun("kv", "fp16", m).refs);
+    return out;
+  };
+  const tiny = tinyOf("random");
+  tiny.trained = tinyOf("trained");
   t.tiny = tiny;
 
   // Chapter 10

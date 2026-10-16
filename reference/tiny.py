@@ -19,6 +19,16 @@ each linear layer to the LeCun standard deviation 1/sqrt(fan-in) and the
 embedding to N(0, 1), PyTorch's nn.Embedding default, so the blocks and the
 tied output head carry a trained model's share of the signal. Still random.
 
+Since brief 41 the chapters run, by default, the same model after
+Training's default run on Alice's Adventures in Wonderland (the Decoder
+site's trained weights, vendored as ``public/data/trained-weights.json``; see
+``TRAINED``). The trained model learned its LayerNorm gains and shifts and
+the FFN biases, so the forward pass below applies them when the weights
+carry them (the random model's are exactly 1 and 0 and are omitted), and it
+saw 8-character windows, so it runs 16 eight-character prompts cut from the
+corpus's validation split (128 predictions, as the random model's four
+32-character prompts give). The random model stays as the contrast.
+
 What the chapters measure (``experiment``): the reference logits of every
 position of a few prompts, then the logits with the weights or the KV cache
 quantised, and from the two: the relative RMS logit drift, the largest
@@ -27,6 +37,7 @@ logit change, and how often the top next-token prediction is unchanged.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any, Callable
 
 import numerics as N
@@ -134,6 +145,52 @@ def model_weights(cfg: dict[str, int] = CONFIG) -> dict[str, Any]:
     return out
 
 # ---------------------------------------------------------------------------
+# The trained model (brief 41): Training's default run, vendored
+# ---------------------------------------------------------------------------
+
+TRAINED_PATH = Path(__file__).resolve().parent.parent / "public" / "data" / "trained-weights.json"
+TRAINED_CONFIG: dict[str, int] = dict(CONFIG, seq_len=8)
+
+# 16 eight-character windows of the corpus's validation split (its last 10%,
+# held out from training), evenly spaced: window k starts at floor(k * span / 16),
+# span = len(val) - 9, as Training's val_batch spaces its windows.
+TRAINED_PROMPTS = [
+    "ather a ", " the lis", "n a deep", ", at the", " in thei", "o alice.", "d read o", '" said t',
+    "ke an ho", "ore.\nif ", 'ng, "tha', "e had th", 'ead!" th', "but now ", " white r", "g sheep-",
+]
+# GPTQ calibrates on 16 windows of the training split, spaced the same way.
+TRAINED_CALIB = [
+    "chapter ", "f you ho", "if i lik", " the duc", "alice, a", "you? tel", "ssantly ", "the righ",
+    " and she", " have so", " said al", "e unfort", "asn't do", "in all m", "ion how ", "n a cry ",
+]
+
+_trained: dict[str, Any] | None = None
+
+
+def trained_weights() -> dict[str, Any]:
+    """Training's trained weights in this file's layout, LayerNorm and biases included."""
+    global _trained
+    if _trained is None:
+        import json
+
+        p = json.loads(TRAINED_PATH.read_text(encoding="utf-8"))["params"]
+        _trained = {"tok_emb": p["tok_emb"], "lnf_g": p["ln_final.gamma"], "lnf_b": p["ln_final.beta"],
+                    "blocks": []}
+        for i in range(CONFIG["n_blocks"]):
+            q = f"block_{i}."
+            blk = {name: p[q + ("attn." if name.startswith("W_") else "ffn.") + name] for name in LINEARS}
+            blk.update(ln1_g=p[q + "ln1.gamma"], ln1_b=p[q + "ln1.beta"], ln2_g=p[q + "ln2.gamma"],
+                       ln2_b=p[q + "ln2.beta"], b1=p[q + "ffn.b1"], b2=p[q + "ffn.b2"])
+            _trained["blocks"].append(blk)
+    return _trained
+
+
+RANDOM: dict[str, Any] = {"id": "random", "config": CONFIG, "prompts": PROMPTS, "calib": CALIB,
+                          "weights": lambda: model_weights()}
+TRAINED: dict[str, Any] = {"id": "trained", "config": TRAINED_CONFIG, "prompts": TRAINED_PROMPTS,
+                           "calib": TRAINED_CALIB, "weights": trained_weights}
+
+# ---------------------------------------------------------------------------
 # Forward pass (src/lib/transformer/*.ts, same operation order)
 # ---------------------------------------------------------------------------
 
@@ -158,7 +215,9 @@ def transpose(A: list[list[float]]) -> list[list[float]]:
     return [list(r) for r in zip(*A)]
 
 
-def layernorm_rows(x: list[list[float]]) -> list[list[float]]:
+def layernorm_rows(x: list[list[float]], g: list[float] | None = None,
+                   b: list[float] | None = None) -> list[list[float]]:
+    """LayerNorm of each row; gamma and beta default to the random model's 1 and 0."""
     out = []
     for row in x:
         n = len(row)
@@ -171,8 +230,11 @@ def layernorm_rows(x: list[list[float]]) -> list[list[float]]:
             d = v - mean
             vs += d * d
         inv = 1 / math.sqrt(vs / n + 1e-5)
-        # gamma = 1, beta = 0: (x - mu) * inv * 1 + 0, as the TS computes it
-        out.append([(v - mean) * inv * 1 + 0 for v in row])
+        if g is None:
+            # gamma = 1, beta = 0: (x - mu) * inv * 1 + 0, as the TS computes it
+            out.append([(v - mean) * inv * 1 + 0 for v in row])
+        else:
+            out.append([(v - mean) * inv * g[j] + b[j] for j, v in enumerate(row)])
     return out
 
 
@@ -262,19 +324,21 @@ def forward(ids: list[int], cfg: dict[str, int], w: dict[str, Any], kv: KvHook |
     pos = positional_encoding(cfg["seq_len"], cfg["d_model"])
     x = add(tok, pos)  # the TS adds the full [seq_len, D] table: prompts are seq_len long
     for li, b in enumerate(w["blocks"]):
-        ln1 = layernorm_rows(x)
+        ln1 = layernorm_rows(x, b.get("ln1_g"), b.get("ln1_b"))
         if cap is not None:
             cap.setdefault("in_W_qkv", []).append(ln1)
         h = add(x, attention(ln1, b, cfg["n_heads"], li, kv, cap))
-        ln2 = layernorm_rows(h)
-        pre = [[v + 0 for v in r] for r in matmul(ln2, b["W1"])]
+        ln2 = layernorm_rows(h, b.get("ln2_g"), b.get("ln2_b"))
+        b1 = b.get("b1") or [0] * len(b["W1"][0])
+        pre = [[v + b1[j] for j, v in enumerate(r)] for r in matmul(ln2, b["W1"])]
         act = [[gelu(v) for v in r] for r in pre]
         if cap is not None:
             cap.setdefault("in_W1", []).append(ln2)
             cap.setdefault("in_W2", []).append(act)
-        out = [[v + 0 for v in r] for r in matmul(act, b["W2"])]
+        b2 = b.get("b2") or [0] * len(b["W2"][0])
+        out = [[v + b2[j] for j, v in enumerate(r)] for r in matmul(act, b["W2"])]
         x = add(h, out)
-    xf = layernorm_rows(x)
+    xf = layernorm_rows(x, w.get("lnf_g"), w.get("lnf_b"))
     return matmul(xf, transpose(w["tok_emb"]))
 
 
@@ -358,9 +422,10 @@ WEIGHT_ORDER = tuple(WEIGHT_CONFIGS)
 
 def quantise_weights(w: dict[str, Any], cfg_id: str, calib: dict | None = None) -> dict[str, Any]:
     """A copy of the weights with every linear layer of every block fake-quantised (embeddings kept)."""
-    out = {"tok_emb": w["tok_emb"], "blocks": []}
+    out = {k: v for k, v in w.items() if k != "blocks"}  # embeddings and final LN kept
+    out["blocks"] = []
     for li, b in enumerate(w["blocks"]):
-        nb = {}
+        nb = {k: v for k, v in b.items() if k not in LINEARS}  # LN and biases kept
         for name in LINEARS:
             W = b[name]
             if cfg_id == "int8_ch":
@@ -392,12 +457,13 @@ def quantise_weights(w: dict[str, Any], cfg_id: str, calib: dict | None = None) 
     return out
 
 
-def calibration(w: dict[str, Any]) -> dict[str, list[list[list[float]]]]:
+def calibration(w: dict[str, Any], model: dict | None = None) -> dict[str, list[list[list[float]]]]:
     """Each linear layer's inputs over the calibration prompts, as X [d_in, n] (GPTQ's layout)."""
+    m = model or RANDOM
     caps = []
-    for p in CALIB:
+    for p in m["calib"]:
         cap: dict = {}
-        forward(encode_text(p), CONFIG, w, None, cap)
+        forward(encode_text(p), m["config"], w, None, cap)
         caps.append(cap)
     key = {"W_q": "in_W_qkv", "W_k": "in_W_qkv", "W_v": "in_W_qkv", "W_o": "in_W_o", "W1": "in_W1", "W2": "in_W2"}
     out: dict[str, list] = {}
@@ -598,37 +664,42 @@ def tiny_steps(refs: list[list[float]], qs: list[list[float]], ids: list[int]) -
     return out
 
 
-def run(target: str, cfg_id: str, w: dict[str, Any] | None = None, calib: dict | None = None) -> dict[str, Any]:
+def run(target: str, cfg_id: str, w: dict[str, Any] | None = None, calib: dict | None = None,
+        model: dict | None = None) -> dict[str, Any]:
     """Every prompt through the reference and the quantised model: logits, summary and per-prompt steps."""
+    m = model or RANDOM
+    cfg = m["config"]
     if w is None:
-        w = model_weights()
-    ids = [encode_text(p) for p in PROMPTS]
-    refs = [forward(t, CONFIG, w) for t in ids]
+        w = m["weights"]()
+    ids = [encode_text(p) for p in m["prompts"]]
+    refs = [forward(t, cfg, w) for t in ids]
     if target == "weights":
         if cfg_id == "gptq3_ch" and calib is None:
-            calib = calibration(w)
+            calib = calibration(w, m)
         wq = quantise_weights(w, cfg_id, calib)
-        qs = [forward(t, CONFIG, wq) for t in ids]
+        qs = [forward(t, cfg, wq) for t in ids]
     else:
         h = kv_hook(cfg_id)
-        qs = [forward(t, CONFIG, w, h) for t in ids]
+        qs = [forward(t, cfg, w, h) for t in ids]
     return {"summary": summarise(refs, qs), "steps": [tiny_steps(r, q, t) for r, q, t in zip(refs, qs, ids)], "refs": refs, "qs": qs}
 
 
-def experiment() -> dict[str, Any]:
-    w = model_weights()
-    ids = [encode_text(p) for p in PROMPTS]
-    refs = [forward(t, CONFIG, w) for t in ids]
-    calib = calibration(w)
+def experiment(model: dict | None = None) -> dict[str, Any]:
+    m = model or RANDOM
+    cfg = m["config"]
+    w = m["weights"]()
+    ids = [encode_text(p) for p in m["prompts"]]
+    refs = [forward(t, cfg, w) for t in ids]
+    calib = calibration(w, m)
     weights = {}
     for c in WEIGHT_ORDER:
         wq = quantise_weights(w, c, calib)
-        qs = [forward(t, CONFIG, wq) for t in ids]
+        qs = [forward(t, cfg, wq) for t in ids]
         weights[c] = summarise(refs, qs)
     kv = {}
     for c in KV_ORDER:
         h = kv_hook(c)
-        qs = [forward(t, CONFIG, w, h) for t in ids]
+        qs = [forward(t, cfg, w, h) for t in ids]
         kv[c] = summarise(refs, qs)
     return {"weights": weights, "kv": kv, "margins": margins(refs)}
 
@@ -636,4 +707,4 @@ def experiment() -> dict[str, Any]:
 if __name__ == "__main__":
     import json
 
-    print(json.dumps(experiment(), indent=1))
+    print(json.dumps({"random": experiment(), "trained": experiment(TRAINED)}, indent=1))
