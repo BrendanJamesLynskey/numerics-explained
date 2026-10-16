@@ -134,9 +134,11 @@ export default function AboutPage(): JSX.Element {
             reference/tiny.py
           </a>
           . It runs in your browser twice, as is and with its weights or its KV
-          cache quantised, and the pages compare the two over four prompts. Its
-          weights are random, rescaled from the explainer&apos;s so that its
-          blocks matter; its text is gibberish, its arithmetic real. A test
+          cache quantised, and the pages compare the two. By default it runs the
+          weights the Training site&apos;s default run ends with (trained on one
+          public-domain book, 16 eight-character prompts from the part it never
+          saw); the random model it started from, rescaled from the
+          explainer&apos;s so that its blocks matter, is one click away. A test
           proves the hooked forward pass equals the explainer&apos;s exactly,
           and the Python and TypeScript runs agree to a relative 10⁻¹² (they
           share exp, log, sin, cos and tanh, which each language may round
@@ -212,8 +214,9 @@ export default function AboutPage(): JSX.Element {
             does; GPU kernels usually accumulate in FP32 and in their own order.
           </li>
           <li>
-            The layers of chapters 6 to 8 are generated; the tiny
-            transformer&apos;s weights are random; the KV-cache layouts are
+            The layers of chapters 6 to 8 are generated; the tiny transformer is
+            trained on one book and learns letter statistics, not language (its
+            random-init alternative is gibberish); the KV-cache layouts are
             simplified (one scale over the whole prompt for per-channel keys);
             the energy figures are for a 45 nm process.
           </li>

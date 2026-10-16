@@ -2,6 +2,7 @@
  * <V of="e4m3.max" fmt="exact" />: a number from the tested model,
  * formatted, in running prose. Server Component.
  */
+import "@/lib/num/trained-data"; // the tiny model's trained weights, server side
 import { formatValue, lookup, type Fmt } from "@/lib/num/values";
 
 export function V({ of, fmt = "num" }: { of: string; fmt?: Fmt }): JSX.Element {

@@ -3,7 +3,10 @@
 /**
  * The tiny model, live (chapters 8 and 9): the vendored explainer
  * transformer runs in the browser twice, as is and with its weights (or its
- * KV cache) quantised, over a 32-character prompt (`run`, `tinySteps`).
+ * KV cache) quantised, over a prompt (`run`, `tinySteps`): by default the
+ * trained model (Training's default run, 8-character prompts from the
+ * book's held-out text), or the random model it started from (32-character
+ * prompts), chosen with the Weights control.
  * One position per step: the prompt with a mark under every position
  * whose top prediction survived, the reference's five most likely next
  * characters with both models' logits, and the RMS logit change so far.
@@ -26,13 +29,17 @@ import { tinyCaption } from "@/lib/num/captions";
 import {
   KV_CONFIGS,
   KV_ORDER,
-  PROMPTS,
   WEIGHT_CONFIGS,
   WEIGHT_ORDER,
+  TRAINED_WEIGHTS_URL,
+  hasTrainedWeights,
   pendingTasks,
+  promptsOf,
+  provideTrainedWeights,
   run,
   tokenLabel,
   type KvCfg,
+  type TinyModel,
   type TinyTarget,
   type WeightCfg,
 } from "@/lib/num/tiny";
@@ -57,21 +64,60 @@ export default function TinyWidget({
   const order = (target === "weights" ? WEIGHT_ORDER : KV_ORDER) as Cfg[];
   const [cfg, setCfg] = useState<Cfg>(initial as Cfg);
   const [prompt, setPrompt] = useState(0);
+  const [model, setModelState] = useState<TinyModel>("trained");
+  const setModel = (m: TinyModel) => {
+    setPrompt(0); // the two models have different prompts
+    setModelState(m);
+  };
   const [version, setVersion] = useState(0);
+  // the trained weights are fetched, not bundled (see provideTrainedWeights)
+  const [haveWeights, setHaveWeights] = useState(hasTrainedWeights());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    if (haveWeights || model !== "trained") return;
+    let cancelled = false;
+    fetch(TRAINED_WEIGHTS_URL)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((file) => {
+        provideTrainedWeights(file);
+        if (!cancelled) setHaveWeights(true);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setLoadError(e instanceof Error ? e.message : "failed to load");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [haveWeights, model]);
+  const waiting = model === "trained" && !haveWeights;
 
   // compute every format's run in small pieces, the chosen one first
   useEffect(() => {
+    if (waiting) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const queue: { cfg: Cfg; task: () => unknown }[] = [cfg, ...order].flatMap(
-      (c) => pendingTasks(target, c).map((task) => ({ cfg: c, task })),
+      (c) => pendingTasks(target, c, model).map((task) => ({ cfg: c, task })),
     );
+    // run passes for up to ~8 ms per slice (the trained model's passes are
+    // short, so one per timer would spend its time waiting on the timer)
     const next = () => {
       if (cancelled) return;
-      const item = queue.shift();
-      if (!item) return;
-      item.task();
-      if (pendingTasks(target, item.cfg).length === 0) setVersion((v) => v + 1);
+      const t0 = performance.now();
+      let done = false;
+      while (!done && performance.now() - t0 < 8) {
+        const item = queue.shift();
+        if (!item) return;
+        item.task();
+        if (pendingTasks(target, item.cfg, model).length === 0) {
+          setVersion((v) => v + 1);
+          done = true; // let React render the finished format
+        }
+      }
       timer = setTimeout(next, 0);
     };
     timer = setTimeout(next, 0);
@@ -79,14 +125,30 @@ export default function TinyWidget({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [target, cfg, order]);
+  }, [target, cfg, order, model, waiting]);
 
   const ready = useMemo(
-    () => pendingTasks(target, cfg).length === 0,
+    () => !waiting && pendingTasks(target, cfg, model).length === 0,
     // re-evaluated when a format finishes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [target, cfg, version],
+    [target, cfg, version, model, waiting],
   );
+  if (loadError)
+    return (
+      <p role="alert" className="my-8 text-sm text-red-700 dark:text-red-300">
+        Could not load the trained weights ({loadError}).{" "}
+        <button
+          type="button"
+          className="focus-ring underline"
+          onClick={() => {
+            setLoadError(null);
+            setModel("random");
+          }}
+        >
+          Use random init
+        </button>
+      </p>
+    );
   if (!ready)
     return (
       <p
@@ -104,6 +166,8 @@ export default function TinyWidget({
       setCfg={setCfg}
       prompt={prompt}
       setPrompt={setPrompt}
+      model={model}
+      setModel={setModel}
       version={version}
     >
       {children}
@@ -118,6 +182,8 @@ function TinyPanel({
   setCfg,
   prompt,
   setPrompt,
+  model,
+  setModel,
   version,
   children,
 }: {
@@ -127,6 +193,8 @@ function TinyPanel({
   setCfg: (c: Cfg) => void;
   prompt: number;
   setPrompt: (p: number) => void;
+  model: TinyModel;
+  setModel: (m: TinyModel) => void;
   version: number;
   children?: ReactNode;
 }): JSX.Element {
@@ -134,32 +202,34 @@ function TinyPanel({
     target === "weights" ? WEIGHT_CONFIGS : KV_CONFIGS
   ) as Record<string, { label: string; bits: number }>;
   const [hover, setHover] = useState<string | null>(null);
-  const r = useMemo(() => run(target, cfg), [target, cfg]);
+  const r = useMemo(() => run(target, cfg, model), [target, cfg, model]);
+  const prompts = promptsOf(model);
   // the formats computed so far (all of them, a moment after the first)
   const all = useMemo(
     () =>
       order
-        .filter((c) => pendingTasks(target, c).length === 0)
+        .filter((c) => pendingTasks(target, c, model).length === 0)
         .map((c) => ({
           c,
           bits: configs[c]!.bits,
-          ...run(target, c).summary,
+          ...run(target, c, model).summary,
         })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [order, configs, target, version],
+    [order, configs, target, version, model],
   );
   const steps = r.steps[prompt]!;
   const st = useStepper(steps.length, {
     stepMs: 650,
-    resetKey: `${cfg}-${prompt}`,
+    resetKey: `${model}-${cfg}-${prompt}`,
   });
   const s = steps[st.step]!;
   const font = useSvgFont(VW);
   const fz = font.fs(11);
-  const text = PROMPTS[prompt]!;
+  const text = prompts[prompt]!;
   const n = text.length;
-  // one row of 32 characters, or two of 16 on a phone
-  const perRow = font.narrow ? 16 : 32;
+  // one row of 32 characters, or two of 16 on a phone (one row of 8 for
+  // the trained model's prompts)
+  const perRow = Math.min(n, font.narrow ? 16 : 32);
   const cw = (VW - 8) / perRow;
   const boxH = fz * 1.5;
   const markH = Math.max(6, fz * 0.5);
@@ -394,7 +464,7 @@ function TinyPanel({
           ? "The tiny model with quantised weights"
           : "The tiny model with a quantised KV cache"
       }
-      summary={`The Transformer Decoder Explainer’s model (2 blocks, d = 16, random weights, rescaled) run in your browser twice: as is, and with ${target === "weights" ? "every block’s weights" : "its keys and values"} in ${label}.`}
+      summary={`The Transformer Decoder Explainer’s model (2 blocks, d = 16, ${model === "trained" ? "trained on one book" : "random weights, rescaled"}) run in your browser twice: as is, and with ${target === "weights" ? "every block’s weights" : "its keys and values"} in ${label}.`}
       stepper={st}
       stepLabel="position"
       caption={tinyCaption(s, n, label)}
@@ -405,7 +475,7 @@ function TinyPanel({
       stats={
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
-            label="Agreement, 4 prompts"
+            label={`Agreement, ${prompts.length} prompts`}
             value={`${r.summary.agree} of ${r.summary.n}`}
             hint={pct(r.summary.agree / r.summary.n, 1)}
           />
@@ -451,11 +521,23 @@ function TinyPanel({
               onChange={(e) => setPrompt(Number(e.target.value))}
               data-testid="prompt"
             >
-              {PROMPTS.map((p, i) => (
+              {prompts.map((p, i) => (
                 <option key={i} value={i}>
-                  {i + 1}: “{p}”
+                  {i + 1}: “{p.replace(/\n/g, "↵")}”
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="text-xs font-medium uppercase tracking-widest text-neutral-500 dark:text-neutral-400">
+            Weights
+            <select
+              className={SELECT}
+              value={model}
+              onChange={(e) => setModel(e.target.value as TinyModel)}
+              data-testid="model"
+            >
+              <option value="trained">trained</option>
+              <option value="random">random init</option>
             </select>
           </label>
         </>

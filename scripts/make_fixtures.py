@@ -247,16 +247,22 @@ def dump(obj: dict, indent: int | None = 1) -> str:
 
 
 # (generator, JSON indent): the fixtures are compact, the site data readable.
-def tiny_fixtures() -> dict:
+def tiny_trained_data() -> dict:
+    """Brief 41: the trained model's context, prompts and calibration prompts."""
+    return {"config": T.TRAINED_CONFIG, "prompts": T.TRAINED_PROMPTS, "calib": T.TRAINED_CALIB}
+
+
+def tiny_fixtures(model: dict | None = None) -> dict:
     """The tiny model's runs. The TS port matches these to a relative 1e-12 (shared transcendentals)."""
-    w = T.model_weights()
-    calib = T.calibration(w)
+    m = model or T.RANDOM
+    w = m["weights"]()
+    calib = T.calibration(w, m)
     out: dict = {"emb0": w["tok_emb"][0], "wq0": w["blocks"][0]["W_q"][0], "w2last": w["blocks"][1]["W2"][-1]}
     runs: dict = {"weights": {}, "kv": {}}
     first = None
     for target, order in (("weights", T.WEIGHT_ORDER), ("kv", T.KV_ORDER)):
         for c in order:
-            r = T.run(target, c, w, calib)
+            r = T.run(target, c, w, calib, m)
             first = first or r["refs"]
             runs[target][c] = {"summary": r["summary"], "steps0": r["steps"][0],
                                "agree": [sum(1 for s in st if s["agree"]) for st in r["steps"]]}
@@ -272,6 +278,9 @@ TARGETS = {
     ROOT / "src" / "data" / "tiny.json": (tiny_data, 1),
     ROOT / "tests" / "fixtures" / "num_fixtures.json": (fixtures, None),
     ROOT / "tests" / "fixtures" / "tiny_fixtures.json": (tiny_fixtures, None),
+    # brief 41: the trained model (new files; the four above are unchanged)
+    ROOT / "src" / "data" / "tiny_trained.json": (tiny_trained_data, 1),
+    ROOT / "tests" / "fixtures" / "tiny_trained_fixtures.json": (lambda: tiny_fixtures(T.TRAINED), None),
 }
 
 
@@ -292,7 +301,7 @@ def close(a, b, rel: float = 1e-12) -> bool:
 
 # Results that pass through exp, log, sin, cos or tanh, whose last bit depends
 # on the platform's maths library: --check compares them to a relative 1e-12.
-TOLERANT = {"tiny_fixtures.json": None, "num_fixtures.json": "nf4Build"}
+TOLERANT = {"tiny_fixtures.json": None, "tiny_trained_fixtures.json": None, "num_fixtures.json": "nf4Build"}
 
 
 def up_to_date(path: Path, text: str) -> bool:

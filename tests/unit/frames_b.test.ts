@@ -6,10 +6,12 @@
  * the tiny model pass through exp and friends, so their states are matched
  * to a relative 1e-12 and their captions exactly.
  */
+import "@/lib/num/trained-data"; // the trained weights, as the server has them
 import { describe, expect, it } from "vitest";
 
 import fx from "../fixtures/num_fixtures.json";
 import tfx from "../fixtures/tiny_fixtures.json";
+import trfx from "../fixtures/tiny_trained_fixtures.json";
 
 import { digest } from "./helpers/digest";
 
@@ -140,6 +142,33 @@ describe("chapters 8 and 9: tiny-model frames", () => {
           ]);
           expect(tinyCaption(ts[t]!, 32, label)).toBe(
             tinyCaption(py[t]!, 32, label),
+          );
+        }
+      });
+    }
+});
+
+describe("chapters 8 and 9: tiny-model frames, trained (brief 41)", () => {
+  for (const [target, order, cfgs] of [
+    ["weights", WEIGHT_ORDER, WEIGHT_CONFIGS],
+    ["kv", KV_ORDER, KV_CONFIGS],
+  ] as const)
+    for (const c of order) {
+      const label = (cfgs as Record<string, { label: string }>)[c]!.label;
+      const ts = run(target, c, "trained").steps[0]!;
+      const py = (trfx.runs[target] as Record<string, { steps0: TinyStep[] }>)[
+        c
+      ]!.steps0;
+      it(`${target} ${c}: positions 0, 3, 7`, () => {
+        expect(ts).toHaveLength(8);
+        for (const t of [0, 3, 7]) {
+          expect([ts[t]!.top, ts[t]!.agree, ts[t]!.agreed]).toEqual([
+            py[t]!.top,
+            py[t]!.agree,
+            py[t]!.agreed,
+          ]);
+          expect(tinyCaption(ts[t]!, 8, label)).toBe(
+            tinyCaption(py[t]!, 8, label),
           );
         }
       });

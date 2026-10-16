@@ -1,0 +1,47 @@
+{
+ "calib": [
+  "chapter ",
+  "f you ho",
+  "if i lik",
+  " the duc",
+  "alice, a",
+  "you? tel",
+  "ssantly ",
+  "the righ",
+  " and she",
+  " have so",
+  " said al",
+  "e unfort",
+  "asn't do",
+  "in all m",
+  "ion how ",
+  "n a cry "
+ ],
+ "config": {
+  "d_ff": 32,
+  "d_model": 16,
+  "n_blocks": 2,
+  "n_heads": 2,
+  "seed": 42,
+  "seq_len": 8,
+  "vocab_size": 64
+ },
+ "prompts": [
+  "ather a ",
+  " the lis",
+  "n a deep",
+  ", at the",
+  " in thei",
+  "o alice.",
+  "d read o",
+  "\" said t",
+  "ke an ho",
+  "ore.\nif ",
+  "ng, \"tha",
+  "e had th",
+  "ead!\" th",
+  "but now ",
+  " white r",
+  "g sheep-"
+ ]
+}

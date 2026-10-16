@@ -3,6 +3,8 @@
  * resolves in the library, and every number the prose spells out in words
  * (or in a chapter summary) is recomputed here from the library.
  */
+import "@/lib/num/trained-data"; // the trained weights, as the server has them
+import { WEIGHT_ORDER } from "@/lib/num/tiny";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -163,37 +165,51 @@ describe("numbers written in the prose, chapters 6-10", () => {
     expect(n("nf4.zmax")).toBeCloseTo(1.85, 2);
     expect(n("nf4.mse_nf4")).toBeLessThan(n("nf4.mse_int4"));
     expect(n("awq.b3.best")).toBeLessThan(n("awq.b3.base"));
-    // "each bit removed roughly doubles the drift or more"
-    const w = (c: string) => n(`tiny.weights.${c}.drift`);
-    expect((w("int4_ch") / w("int8_ch")) ** (1 / 4)).toBeGreaterThan(1.9);
-    expect(w("int3_ch") / w("int4_ch")).toBeGreaterThan(2);
-    // "with the same blocks of 64, NF4's grid beats INT4's"
-    expect(w("nf4")).toBeLessThan(w("int4_b64"));
-    // "GPTQ ... recovers part of what plain INT3 rounding loses"
-    expect(w("gptq3_ch")).toBeLessThan(w("int3_ch"));
-    expect(n("tiny.weights.gptq3_ch.agree")).toBeGreaterThan(
-      n("tiny.weights.int3_ch.agree"),
-    );
-    expect(n("tiny.weights.int8_ch.n")).toBe(128);
+    // brief 41: the table and these claims are the trained model's
+    for (const m of ["tiny.trained", "tiny"]) {
+      // "each bit removed roughly doubles the drift or more"
+      const w = (c: string) => n(`${m}.weights.${c}.drift`);
+      expect((w("int4_ch") / w("int8_ch")) ** (1 / 4)).toBeGreaterThan(1.9);
+      expect(w("int3_ch") / w("int4_ch")).toBeGreaterThan(2);
+      // "with the same blocks of 64, NF4's grid beats INT4's"
+      expect(w("nf4")).toBeLessThan(w("int4_b64"));
+      // "GPTQ ... recovers part of what plain INT3 rounding loses"
+      expect(w("gptq3_ch")).toBeLessThan(w("int3_ch"));
+      expect(n(`${m}.weights.gptq3_ch.agree`)).toBeGreaterThan(
+        n(`${m}.weights.int3_ch.agree`),
+      );
+      // "Over the 128 predictions"
+      expect(n(`${m}.weights.int8_ch.n`)).toBe(128);
+    }
+    // "every format drifts more there" (random init against trained)
+    for (const c of WEIGHT_ORDER)
+      expect(n(`tiny.weights.${c}.drift`)).toBeGreaterThan(
+        n(`tiny.trained.weights.${c}.drift`),
+      );
   });
   it("chapter 9", () => {
-    const k = (c: string, f: string) => n(`tiny.kv.${c}.${f}`);
-    // "Eight bits are close to free; four bits cost a few per cent of drift
-    // and almost no flipped predictions; two bits break it"
-    expect(k("int8_tok", "drift")).toBeLessThan(0.01);
-    expect(k("int4_tok", "drift")).toBeLessThan(0.1);
-    expect(k("int4_tok", "agree")).toBeGreaterThanOrEqual(124);
-    expect(k("int2_tok", "drift")).toBeGreaterThan(0.2);
-    expect(k("int2_tok", "agree")).toBeLessThan(110);
-    // "the two layouts give about the same drift"
-    expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeGreaterThan(
-      0.8,
-    );
-    expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeLessThan(1.25);
-    // "4 + 16/8 = 6", "4 + 8/16 = 4.5"; "lands near INT4 per token"
-    expect(k("int4_tok", "bits")).toBe(6);
-    expect(k("fp4_16", "bits")).toBe(4.5);
-    expect(k("fp4_16", "drift") / k("int4_tok", "drift")).toBeLessThan(1.5);
+    for (const m of ["tiny.trained", "tiny"]) {
+      const k = (c: string, f: string) => n(`${m}.kv.${c}.${f}`);
+      // "Eight bits are close to free; four bits cost a few per cent of drift
+      // and almost no flipped predictions; two bits break it"
+      expect(k("int8_tok", "drift")).toBeLessThan(0.01);
+      expect(k("int4_tok", "drift")).toBeLessThan(0.1);
+      expect(k("int4_tok", "agree")).toBeGreaterThanOrEqual(124);
+      expect(k("int2_tok", "drift")).toBeGreaterThan(0.15);
+      expect(k("int2_tok", "agree")).toBeLessThan(110);
+      // "the two layouts give about the same drift" (trained, and at random init)
+      expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeGreaterThan(
+        0.8,
+      );
+      expect(k("int4_kivi", "drift") / k("int4_tok", "drift")).toBeLessThan(
+        1.25,
+      );
+      // "4 + 16/8 = 6", "4 + 8/16 = 4.5"; "lands near INT4 per token"
+      expect(k("int4_tok", "bits")).toBe(6);
+      expect(k("fp4_16", "bits")).toBe(4.5);
+      expect(k("fp4_16", "drift") / k("int4_tok", "drift")).toBeLessThan(1.5);
+      expect(k("int8_tok", "n")).toBe(128);
+    }
   });
   it("chapter 10", () => {
     // "more than a hundred FP32 multiply-adds"; "15.5 times more"

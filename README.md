@@ -145,11 +145,19 @@ model: its TypeScript is vendored byte for byte into `src/lib/transformer/`
 from commit `0049cf3` (MIT), and `tiny.py` is a plain-Python port of it. The
 hooks fake-quantise the six linear layers of each block (ten formats,
 GPTQ calibrated on four other prompts) or the keys and values (eight
-formats), and the measurements run four 32-character prompts teacher-forced:
-relative RMS logit drift, largest logit change, and how many of the 128
-top-1 predictions are unchanged. The weights are random; the explainer's
-N(0, 0.02) draws are rescaled (linears to 1/√fan-in, the embedding to
-N(0, 1)) so the blocks carry a trained model's share of the signal. A unit
+formats), and the measurements run the prompts teacher-forced: relative
+RMS logit drift, largest logit change, and how many of the 128 top-1
+predictions are unchanged. Since brief 41 the chapters default to the
+**trained** model: the weights the Training site's default run ends with
+(`public/data/trained-weights.json`, vendored from transformer-explainer's
+`public/training/default-run-weights.json` at `984e647`, sha256
+`bd44e460…`), with its learned LayerNorm gains and FFN biases, on 16
+eight-character prompts from the book's held-out tenth (GPTQ calibrates on
+16 windows of the training part); fixtures `tests/fixtures/tiny_trained_fixtures.json`
+and `src/data/tiny_trained.json`. The **random** model stays one click away
+(four 32-character prompts; the explainer's N(0, 0.02) draws rescaled,
+linears to 1/√fan-in and the embedding to N(0, 1), so the blocks carry a
+trained model's share of the signal), and its fixtures are unchanged. A unit
 test proves the hooked forward pass equals the explainer's `forwardTyped`
 exactly; Python and TypeScript share exp, log, sin, cos and tanh, so the
 fixtures match to a relative 1e-12 (exactly for top tokens and agreement
@@ -249,16 +257,17 @@ animation is a code-split client component.
 Copied from [gpu-kernels-explained](https://github.com/BrendanJamesLynskey/gpu-kernels-explained)
 at commit `7242143`, which copied it from the other companion sites:
 
-| Here                                                                                                                                               | From                                                                               |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `tailwind.config.ts`, `src/app/globals.css`, `src/app/layout.tsx`                                                                                  | identical apart from titles; `globals.css` has this site's equation-highlight keys |
-| `src/components/ui/SiteHeader.tsx`, `SiteSwitch.tsx`                                                                                               | the same header and four-track switch, with Numerics live                          |
-| `src/components/anim/`, `src/lib/anim/clock.ts`, `src/components/viz/useSvgFont.ts`, `src/components/mdx/Eq.tsx`                                   | unchanged                                                                          |
-| `src/lib/viz/palette.ts`                                                                                                                           | the family palette, plus this site's bit-field and method colours                  |
-| `src/app/learn/`, `src/lib/mdx/`, `Layer.tsx`, `LayerToggle.tsx`, `MdxTable.tsx`, `Controls.tsx`, `Callout.tsx`                                    | copied                                                                             |
-| `.eslintrc.json`, `.prettierrc.json`, `tsconfig.json`, `vitest.config.ts`, `playwright.config.ts`, `lighthouserc.json`, `.github/workflows/ci.yml` | adapted (library job, new pages)                                                   |
-| `scripts/smoke-check.ts`, `scripts/capture-screenshots.ts`, `RUNBOOK.md`                                                                           | adapted                                                                            |
-| `src/lib/transformer/` (15 files)                                                                                                                  | transformer-explainer `src/lib/transformer/` at `0049cf3`, byte for byte           |
+| Here                                                                                                                                               | From                                                                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `tailwind.config.ts`, `src/app/globals.css`, `src/app/layout.tsx`                                                                                  | identical apart from titles; `globals.css` has this site's equation-highlight keys                      |
+| `src/components/ui/SiteHeader.tsx`, `SiteSwitch.tsx`                                                                                               | the same header and four-track switch, with Numerics live                                               |
+| `src/components/anim/`, `src/lib/anim/clock.ts`, `src/components/viz/useSvgFont.ts`, `src/components/mdx/Eq.tsx`                                   | unchanged                                                                                               |
+| `src/lib/viz/palette.ts`                                                                                                                           | the family palette, plus this site's bit-field and method colours                                       |
+| `src/app/learn/`, `src/lib/mdx/`, `Layer.tsx`, `LayerToggle.tsx`, `MdxTable.tsx`, `Controls.tsx`, `Callout.tsx`                                    | copied                                                                                                  |
+| `.eslintrc.json`, `.prettierrc.json`, `tsconfig.json`, `vitest.config.ts`, `playwright.config.ts`, `lighthouserc.json`, `.github/workflows/ci.yml` | adapted (library job, new pages)                                                                        |
+| `scripts/smoke-check.ts`, `scripts/capture-screenshots.ts`, `RUNBOOK.md`                                                                           | adapted                                                                                                 |
+| `src/lib/transformer/` (15 files)                                                                                                                  | transformer-explainer `src/lib/transformer/` at `0049cf3`, byte for byte                                |
+| `public/data/trained-weights.json`                                                                                                                 | transformer-explainer `public/training/default-run-weights.json` at `984e647`, byte for byte (brief 41) |
 
 A shared npm package for the design system would be cleaner in principle;
 for a handful of small sites, copying and recording the origin stays

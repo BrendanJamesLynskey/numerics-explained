@@ -267,3 +267,56 @@ def test_tiny_experiment_story():
     assert e["weights"]["nf4"]["drift"] < e["weights"]["int4_b64"]["drift"]  # same blocks: NF4's grid wins
     assert e["kv"]["fp16"]["agree"] == 128
     assert e["kv"]["int8_tok"]["drift"] < e["kv"]["int4_tok"]["drift"] < e["kv"]["int2_tok"]["drift"]
+
+
+def np_forward_full(ids: list[int], w: dict) -> np.ndarray:
+    """Brief 41: a numpy forward pass with learned LayerNorm gains/shifts and FFN biases."""
+    D, H = T.CONFIG["d_model"], T.CONFIG["n_heads"]
+    dh = D // H
+    E = np.array(w["tok_emb"])
+    x = E[ids] + np.array(T.positional_encoding(len(ids), D))
+
+    def ln(z, g, b):
+        mu = z.mean(axis=1, keepdims=True)
+        var = ((z - mu) ** 2).mean(axis=1, keepdims=True)
+        return (z - mu) / np.sqrt(var + 1e-5) * np.array(g) + np.array(b)
+
+    S = len(ids)
+    mask = np.triu(np.full((S, S), -np.inf), 1)
+    for b in w["blocks"]:
+        h1 = ln(x, b["ln1_g"], b["ln1_b"])
+        Q, K, V = (h1 @ np.array(b[k]) for k in ("W_q", "W_k", "W_v"))
+        heads = []
+        for hh in range(H):
+            sl = slice(hh * dh, (hh + 1) * dh)
+            sc = Q[:, sl] @ K[:, sl].T / math.sqrt(dh) + mask
+            p = np.exp(sc - sc.max(axis=1, keepdims=True))
+            p /= p.sum(axis=1, keepdims=True)
+            heads.append(p @ V[:, sl])
+        h = x + np.concatenate(heads, axis=1) @ np.array(b["W_o"])
+        pre = ln(h, b["ln2_g"], b["ln2_b"]) @ np.array(b["W1"]) + np.array(b["b1"])
+        act = 0.5 * pre * (1 + np.tanh(math.sqrt(2 / math.pi) * (pre + 0.044715 * pre**3)))
+        x = h + act @ np.array(b["W2"]) + np.array(b["b2"])
+    return ln(x, w["lnf_g"], w["lnf_b"]) @ E.T
+
+
+def test_trained_tiny_forward_vs_numpy():
+    w = T.trained_weights()
+    assert any(g != 1 for g in w["blocks"][0]["ln1_g"]) and any(v != 0 for v in w["blocks"][0]["b1"])
+    for p in T.TRAINED_PROMPTS:
+        assert len(p) == T.TRAINED_CONFIG["seq_len"]
+        ids = T.encode_text(p)
+        got = np.array(T.forward(ids, T.TRAINED_CONFIG, w))
+        assert np.allclose(got, np_forward_full(ids, w), rtol=1e-11, atol=1e-12)
+
+
+def test_trained_tiny_experiment_story():
+    e = T.experiment(T.TRAINED)
+    r = T.experiment(T.RANDOM)
+    assert e["weights"]["int8_ch"]["agree"] >= e["weights"]["int4_ch"]["agree"] >= e["weights"]["int3_ch"]["agree"]
+    assert e["weights"]["nf4"]["drift"] < e["weights"]["int4_b64"]["drift"]
+    assert e["weights"]["gptq3_ch"]["drift"] < e["weights"]["int3_ch"]["drift"]
+    assert e["kv"]["fp16"]["agree"] == 128 and e["kv"]["fp16"]["n"] == 128
+    assert e["kv"]["int8_tok"]["drift"] < e["kv"]["int4_tok"]["drift"] < e["kv"]["int2_tok"]["drift"]
+    # every weight format drifts less on the trained model than at random init
+    assert all(e["weights"][c]["drift"] < r["weights"][c]["drift"] for c in T.WEIGHT_ORDER)
