@@ -10,10 +10,11 @@ import type { ReactNode } from "react";
 
 import { SiteHeader } from "@/components/ui/SiteHeader";
 import { SITE_URL } from "@/lib/site";
+import { withShare } from "@/lib/share";
 
 import "./globals.css";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = withShare("/", {
   metadataBase: new URL(SITE_URL),
   title: {
     default: "Numerics Explained",
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
   },
   description:
     "Number formats, rounding and quantisation for machine learning: FP8, MX and 4-bit formats, stochastic rounding, accumulation error, quantisers, outliers, GPTQ, AWQ and NF4, the KV cache and the hardware, each animated by a bit-exact numerics library.",
-};
+});
 
 export default function RootLayout({
   children,

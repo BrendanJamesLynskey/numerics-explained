@@ -9,12 +9,13 @@ import Link from "next/link";
 
 import { SECTIONS } from "@/lib/mdx/sections";
 import { KERNELS_URL, LOCAL_LLM_HUB, TPU_HUB } from "@/lib/site";
+import { withShare } from "@/lib/share";
 
-export const metadata = {
+export const metadata = withShare("/learn", {
   title: "Learn",
   description:
     "Chapters on number formats, rounding and quantisation, each built around an animation driven by the tested numerics library.",
-};
+});
 
 export default function LearnIndex(): JSX.Element {
   return (

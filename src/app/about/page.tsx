@@ -18,12 +18,13 @@ import {
   TPU_HUB,
   repoFile,
 } from "@/lib/site";
+import { withShare } from "@/lib/share";
 
-export const metadata = {
+export const metadata = withShare("/about", {
   title: "About",
   description:
     "What Numerics Explained's library implements, how it is checked bit for bit against numpy, ml_dtypes and the specifications, and what is illustrative.",
-};
+});
 
 const A =
   "focus-ring rounded text-accent underline underline-offset-2 dark:text-indigo-300";
@@ -142,7 +143,7 @@ export default function AboutPage(): JSX.Element {
           differently in the last place) and exactly in every top prediction.
         </p>
 
-        <h2>How it is checked</h2>
+        <h2 id="checked">How it is checked</h2>
         <ul>
           <li>
             <strong>Against numpy and ml_dtypes.</strong>{" "}

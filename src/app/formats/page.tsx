@@ -20,12 +20,13 @@ import {
   NF4_MID,
 } from "@/lib/num/model";
 import { repoFile } from "@/lib/site";
+import { withShare } from "@/lib/share";
 
-export const metadata = {
+export const metadata = withShare("/formats", {
   title: "Formats",
   description:
     "Every number format the site implements (FP32, FP16, BF16, FP8 E4M3 and E5M2, FP6, FP4, MX, NF4) with its constants and its defining source.",
-};
+});
 
 const SOURCES = data.sources as Record<string, { title: string; url: string }>;
 
