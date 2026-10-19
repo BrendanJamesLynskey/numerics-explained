@@ -11,11 +11,15 @@ A floating-point format spends some of its bits on an exponent so that every val
 
 The simplest choice is **absmax**: the scale is the group's largest magnitude divided by $2^{b-1} - 1$, so the largest weight lands exactly on the top code, zero is exactly representable, and everything else is rounded to the nearest step. This is the restricted range $\pm(2^{b-1} - 1)$: two's complement also has the code $-2^{b-1}$ ($-8$ for INT4), which a symmetric quantiser leaves unused so the grid is symmetric about zero; some kernels use the full range instead. [Serving](https://llm-inference-explained.vercel.app/learn/08-quantisation) and [Training](https://transformer-training-explained.vercel.app/training/09-mixed-precision) use the restricted range too. The question is how big a group shares a scale.
 
+<span id="n-granularity" />
+
 The animation quantises one weight matrix (16 output channels by 64 inputs, illustrative) to INT4 five times:
 
 - **Per tensor**, one scale for everything: the rows with small weights get a step sized for the largest weight in the matrix, and most of their weights round to a handful of codes. SQNR (signal to quantisation noise) is <V of="gran.4.sym.0.sqnr" fmt="db" />.
 - **Per channel**, one scale per output row: each row gets a step that fits it. <V of="gran.4.sym.1.sqnr" fmt="db" />.
 - **Per group** of 32, 16 and 8 weights along each row: a few input columns in this matrix are larger in every row, and a group that contains one pays for it; smaller groups confine the damage. <V of="gran.4.sym.2.sqnr" fmt="db" />, <V of="gran.4.sym.3.sqnr" fmt="db" /> and <V of="gran.4.sym.4.sqnr" fmt="db" />.
+
+<span id="n-overhead" />
 
 The scales are not free. Stored in FP16, they add 16 bits per group: <V of="gran.4.sym.1.bits_per_weight" fmt="num" /> bits per weight per channel, <V of="gran.4.sym.2.bits_per_weight" fmt="num" /> with groups of 32, <V of="gran.4.sym.4.bits_per_weight" fmt="num" /> with groups of 8. LLM weight quantisers commonly settle on groups of 64 or 128, where the overhead is an eighth or a quarter of a bit. Watch the error map fade as the groups shrink, and try INT3, where every bit of SQNR is precious.
 
@@ -31,6 +35,8 @@ The scales are not free. Stored in FP16, they add 16 bits per group: <V of="gran
 <Layer kind="concept">
 
 Absmax is symmetric about zero. Weights usually are too, but many activations are not: after a GELU or a ReLU they are mostly positive, and a symmetric grid then spends half its codes on negative values that hardly occur. **Zero-point** (asymmetric, or affine) quantisation shifts the grid to cover the values' actual range, from the minimum to the maximum, using all $2^b$ codes; the integer $z$ that represents 0.0 is the **zero point**.
+
+<span id="n-zeropoint" />
 
 In the animation, 24 skewed activations are quantised to INT4 both ways. The absmax grid has a step of <V of="zp.4.sym_scale" fmt="num" /> and runs from $-7$ to $7$ steps; the values use <V of="zp.4.used_sym" fmt="int" /> of its <V of="zp.4.levels_sym" fmt="int" /> codes; the zero-point grid (zero point <V of="zp.4.zero" fmt="int" />) uses <V of="zp.4.used_asym" fmt="int" /> of <V of="zp.4.levels_asym" fmt="int" />, with a finer step of <V of="zp.4.asym_scale" fmt="num" />, and its mean squared error is <V of="zp.4.mse_asym" fmt="num" /> against absmax's <V of="zp.4.mse_sym" fmt="num" />.
 
@@ -89,3 +95,72 @@ The weight matrix and the activations are generated, not taken from a model: app
 - Jacob et al., [Quantization and training of neural networks for efficient integer-arithmetic-only inference](https://arxiv.org/abs/1712.05877) (2017); Nagel et al., [A white paper on neural network quantization](https://arxiv.org/abs/2106.08295) (2021).
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n05-q1"
+  n={1}
+  input="number"
+  v="ch05.channelGainDb"
+  tol={0.1}
+  q="INT4 on the chapter's matrix: how many dB of SQNR does one scale per channel gain over one per tensor?"
+  href="#n-granularity"
+  more="Granularity"
+>
+  <V v="ch05.channelGainDb" fmt="num" /> dB:
+  <V of="gran.4.sym.1.sqnr" fmt="db" /> against
+  <V of="gran.4.sym.0.sqnr" fmt="db" />. Rows with small weights no longer get a
+  step sized for the matrix's largest weight.
+</Check>
+
+<Check
+  id="n05-q2"
+  n={2}
+  input="number"
+  of="gran.4.sym.2.bits_per_weight"
+  tol={0}
+  q="INT4 with an FP16 scale for every group of 32 weights: how many bits per weight in all?"
+  href="#n-overhead"
+  more="What the scales cost"
+>
+  <V of="gran.4.sym.2.bits_per_weight" fmt="num" />: 4 bits plus 16 shared by
+  32. Groups of 8 cost <V of="gran.4.sym.4.bits_per_weight" fmt="num" />, which
+  is why quantisers settle on groups of 64 or 128.
+</Check>
+
+<Check
+  id="n05-q3"
+  n={3}
+  choices={[
+    "Absmax: it is symmetric",
+    "Zero-point: it uses more codes over their actual range",
+    "Both equally",
+  ]}
+  answer={1}
+  q="Skewed, mostly positive activations at INT4: which quantiser uses more of its codes?"
+  href="#n-zeropoint"
+  more="Zero points"
+>
+  Zero-point: <V of="zp.4.used_asym" fmt="int" /> of
+  <V of="zp.4.levels_asym" fmt="int" /> codes against absmax's
+  <V of="zp.4.used_sym" fmt="int" /> of <V of="zp.4.levels_sym" fmt="int" />,
+  with a finer step and a lower error. The price is correction terms in the dot
+  product.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Integer quantisation: small integers plus one scale per group; the step is set by the group's largest value.
+- Absmax maps the largest magnitude to the top code, $\pm(2^{b-1} - 1)$, and zero exactly.
+- Smaller groups confine outliers but cost scale bits.
+- Zero-point quantisation fits skewed activations; weights are usually symmetric.
+
+<Keep>
+  $s_g = \max_{i \in g} |w_i| / (2^{b-1} - 1)$; an FP16 scale costs
+  $16/g$ bits per weight.
+</Keep>
+
+</Remember>

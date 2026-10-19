@@ -11,6 +11,8 @@ INT4's sixteen levels are evenly spaced. Trained weights are not evenly spread: 
 
 The animation rebuilds bitsandbytes' table, the one QLoRA ships, from scratch: eight positive quantiles at probabilities evenly spaced from $\delta = 0.9677083$ down to $0.5$, seven negative ones, and an exact zero (so the type is asymmetric: zero gets a code of its own, and padding or pruned weights quantise exactly). Divided by the largest quantile, <V of="nf4.zmax" fmt="num" />, the values match bitsandbytes' table to <V of="nf4.max_diff" fmt="sci" /> (its table is built in 32-bit floats). bitsandbytes documents the offset as the outermost quantile boundary, about 1.85 standard deviations, chosen empirically.
 
+<span id="n-nf4" />
+
 Does it help? On 4,096 approximately normal values in blocks of 64, NF4's mean squared error is <V of="nf4.mse_nf4" /> against <V of="nf4.mse_int4" /> for INT4 absmax with the same blocks, <V of="nf4.ratio" /> times smaller (SQNR <V of="nf4.sqnr_nf4" fmt="db" /> against <V of="nf4.sqnr_int4" fmt="db" />).
 
 </Layer>
@@ -23,6 +25,8 @@ Does it help? On 4,096 approximately normal values in blocks of 64, NF4's mean s
 </AwqWidget>
 
 <Layer kind="concept">
+
+<span id="n-awq" />
 
 **AWQ** (activation-aware weight quantisation, Lin et al.) starts from an observation: a small fraction of weights matter far more than the rest, and they are found by looking at the **activations**, not the weights. Keeping just 1% of the weight channels in FP16, chosen by activation size, recovers most of the accuracy that plain 4-bit rounding loses. Mixed precision is awkward for kernels, so AWQ gets the same effect with a scale instead: multiply the weights of input channel $i$ by $s_i > 1$ before rounding and divide its activations by $s_i$. The scaled weights see a relatively finer grid, so the important channels are rounded more accurately.
 
@@ -40,6 +44,8 @@ The scale is $s_i = \overline{|x_i|}^{\alpha}$, and AWQ searches $\alpha \in [0,
 <Layer kind="concept">
 
 Now a real network. The animation above runs the **Transformer Decoder Explainer's tiny transformer** (two blocks, 16-wide, two heads, a 64-character vocabulary) in your browser, twice: once as is, once with the weights of every block's six linear layers quantised. By default it runs the model as the [Training site](https://transformer-training-explained.vercel.app/training) leaves it, trained on _Alice's Adventures in Wonderland_, so its predictions are real guesses at the next letter. It predicts the next character at all 8 positions of 16 prompts cut from the part of the book it never trained on, and compares.
+
+<span id="n-tiny" />
 
 Over the 128 predictions, with the token embedding (and the tied output head) kept at full precision:
 
@@ -102,3 +108,68 @@ The tiny model is the [Transformer Decoder Explainer](https://transformer-decode
 - bitsandbytes' [create_normal_map](https://github.com/bitsandbytes-foundation/bitsandbytes/blob/833649043474794b8fe7a4136e0c40faf077b2e0/bitsandbytes/functional.py), the table this chapter rebuilds.
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n08-q1"
+  n={1}
+  input="number"
+  of="nf4.ratio"
+  tol={0.1}
+  q="On roughly normal values in blocks of 64, how many times smaller is NF4's mean squared error than INT4 absmax's?"
+  href="#n-nf4"
+  more="Does NF4 help?"
+>
+  <V of="nf4.ratio" fmt="num" /> times: NF4 puts its sixteen codes at normal
+  quantiles, where the weights are.
+</Check>
+
+<Check
+  id="n08-q2"
+  n={2}
+  choices={[
+    "The largest weights",
+    "The weights of the channels with the largest activations",
+    "Random weights",
+  ]}
+  answer={1}
+  q="Which weights does AWQ protect?"
+  href="#n-awq"
+  more="AWQ"
+>
+  Those whose input channels have large activations: scaling them up before
+  rounding gives them a relatively finer grid. On this layer at INT3 the best
+  scale cuts the error <V of="awq.b3.ratio" fmt="num" /> times.
+</Check>
+
+<Check
+  id="n08-q3"
+  n={3}
+  input="number"
+  v="ch08.gptqWinsBack"
+  fmt="int"
+  tol={0}
+  q="The trained tiny transformer at INT3 per channel: how many of its 128 top predictions does GPTQ win back over plain rounding?"
+  href="#n-tiny"
+  more="A real network"
+>
+  <V v="ch08.gptqWinsBack" fmt="int" />: GPTQ keeps
+  <V of="tiny.trained.weights.gptq3_ch.agree" fmt="int" /> unchanged, plain INT3
+  <V of="tiny.trained.weights.int3_ch.agree" fmt="int" />.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- NF4 places its 16 codes at normal quantiles, so near-normal weights use them evenly.
+- AWQ finds the important weights from the activations and protects them with a scale, not mixed precision.
+- On the tiny transformer, each bit removed roughly doubles the logit drift or more.
+- Predictions flip where the top two candidates were close.
+
+<Keep>
+  NF4: $q_i = \Phi^{-1}(p_i) / \max_k \Phi^{-1}(p_k)$, plus an exact zero.
+</Keep>
+
+</Remember>

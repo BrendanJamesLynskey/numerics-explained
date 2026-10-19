@@ -9,6 +9,8 @@
 
 Chapter 5 sized a scale for the largest value in its group. That works while the largest value is typical. In the activations of large transformers it often is not: a handful of **hidden dimensions carry values far larger than the rest, in almost every token**. Dettmers et al. report that they emerge in large language models at around 6.7 billion parameters, systematic (the same few dimensions, token after token) and sparse.
 
+<span id="n-input" />
+
 The animation builds such an input: <V of="outlier.channels" fmt="int" /> channels × 32 tokens, where <V of="outlier.n_out" fmt="int" /> channels reach <V of="outlier.amax_out" /> while no other channel exceeds <V of="outlier.amax_normal" />. Then it multiplies the input by a small weight matrix three ways:
 
 - **Per-tensor INT8**: one scale for the whole input, set by the outliers. The ordinary channels are left with <V of="outlier.normal_levels" fmt="int" /> of the 255 codes, under five bits' worth. Output error <V of="outlier.err_tensor" fmt="sci" />.
@@ -29,6 +31,8 @@ The price is a second, irregular matrix multiply and the bookkeeping to split an
 <Layer kind="concept">
 
 **SmoothQuant** (Xiao et al.) keeps everything in INT8 by changing the problem instead. Activations are hard to quantise because their channels differ wildly; weights are easy because theirs do not. Dividing activation channel $j$ by a factor $s_j$ and multiplying row $j$ of the weights by the same $s_j$ leaves the product exactly as it was, in real arithmetic, and the division can be folded into the previous layer's weights, so it costs nothing at run time.
+
+<span id="n-alpha" />
 
 The **migration strength** $\alpha$ says how much of the difficulty to move. At $\alpha = 0$ the activations keep it all; at $\alpha = 1$ the weights take it all; at $\alpha = 0.5$, the paper's default for most models, each channel's largest activation and largest weight become equal. The animation sweeps $\alpha$ in eighths over the same layer. Per-tensor W8A8 error falls from <V of="smooth.base" fmt="sci" /> with no smoothing to <V of="smooth.k4" fmt="sci" /> at $\alpha = 0.5$, <V of="smooth.gain4" /> times smaller; on this layer the best eighth is $\alpha =$ <V of="smooth.best_alpha" />, with <V of="smooth.best_err" fmt="sci" />. Too far, and the weights' columns become the outliers.
 
@@ -87,3 +91,70 @@ The layer is generated, not taken from a model: 8 outputs, 16 input channels, 32
 - The kernels behind W8A8: GPU Kernels Explained, [quantised kernels](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels).
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n06-q1"
+  n={1}
+  input="number"
+  of="outlier.normal_levels"
+  fmt="int"
+  q="Per-tensor INT8 on the chapter's input with outlier channels: how many of the 255 codes are left for the ordinary channels?"
+  href="#n-input"
+  more="Outlier channels"
+>
+  <V of="outlier.normal_levels" fmt="int" />, under five bits' worth: the one
+  scale is set by the outliers.
+</Check>
+
+<Check
+  id="n06-q2"
+  n={2}
+  choices={[
+    "Yes: a scale per token fixes it",
+    "No: every token contains the outlier channels",
+    "Only for long prompts",
+  ]}
+  answer={1}
+  q="Does vector-wise INT8 (a scale per token and per output channel) rescue this input?"
+  href="#n-input"
+  more="Outlier channels"
+>
+  No: the outliers are in the same few channels of every token, so a per-token
+  scale is still set by them. Splitting out those channels in 16-bit cuts the
+  error <V of="outlier.ratio" fmt="num" /> times.
+</Check>
+
+<Check
+  id="n06-q3"
+  n={3}
+  input="slider"
+  min={0}
+  max={1}
+  step={0.125}
+  of="smooth.best_alpha"
+  tol={0}
+  q="SmoothQuant on this layer: which migration strength α, in eighths, gives the lowest W8A8 error?"
+  href="#n-alpha"
+  more="Migration strength"
+>
+  α = <V of="smooth.best_alpha" fmt="num" />, a little past the default of 0.5.
+  Too far, and the weights' columns become the outliers.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Large transformers' activations have a few hidden dimensions far larger than the rest, in almost every token.
+- One scale for such a tensor leaves the ordinary channels a handful of codes.
+- LLM.int8() runs the outlier channels in 16-bit and the rest in INT8.
+- SmoothQuant moves the difficulty from activations to weights with a per-channel scale, exactly, for free at run time.
+
+<Keep>
+  SmoothQuant: $s_j = \max|X_j|^\alpha / \max|W_j|^{1 - \alpha}$, the product
+  unchanged.
+</Keep>
+
+</Remember>

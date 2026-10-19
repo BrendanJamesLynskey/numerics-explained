@@ -9,13 +9,19 @@
 
 Every dot product, every matrix multiply and every normalisation is a long sum, and every addition in a sum is rounded. Most of the time the errors are tiny and cancel. In low precision they can do something much worse: **stop the sum altogether**.
 
+<span id="n-sum" />
+
 The animation adds <V of="demo.sumN" fmt="int" /> numbers between 0 and 1. The exact total is <V of="sum.fp16.uniform.exact" fmt="num" />. Added one at a time in FP16 the running total climbs normally until it reaches 2,048, where FP16's ulp becomes 2: from then on every input is less than half an ulp, every addition rounds back down, and the sum stays at <V of="sum.fp16.uniform.naive" fmt="int" /> for good, half the true answer. In BF16, with three fewer mantissa bits, the same thing happens already at <V of="sum.bf16.uniform.naive" fmt="int" />. This is the stagnation of [chapter 2](/learn/02-rounding), with a growing sum in place of $h$.
+
+<span id="n-fixes" />
 
 Three fixes, all running in the same animation:
 
 - **Accumulate in a wider format.** The FP32 running total ends at <V of="sum.fp16.uniform.naive32" fmt="num" />. This is what hardware does: tensor cores multiply FP16 or BF16 inputs and can add the products into an FP32 accumulator, the usual choice.
 - **Kahan summation** keeps a second number, the compensation $c$, that catches the low-order bits each addition throws away and feeds them back into the next one. Even with every operation in FP16 it reaches <V of="sum.fp16.uniform.kahan" fmt="int" />, the representable FP16 value nearest the exact total.
 - **Pairwise summation** adds the numbers in a balanced tree: pairs, then pairs of pairs. Partial sums stay comparable in size to the numbers being added, so no input is swamped. It reaches <V of="sum.fp16.uniform.pairwise" fmt="int" />, and this ordering is what numpy's `sum` uses (in blocks, along the fast axis) and what parallel reductions on a GPU do naturally.
+
+<span id="n-ones" />
 
 Try "all ones": the naive FP16 sum stops at exactly <V of="sum.fp16.ones.naive" fmt="int" />, because $2048 + 1$ is a tie and ties go to the even neighbour, 2,048. Try "± normal": the sum wanders around zero, the errors are smaller, and the order of the additions still changes the answer.
 
@@ -85,3 +91,70 @@ The inputs are FP16 numbers from a seeded generator, so their exact running sums
 - New to training? [Training, chapter 9: mixed precision](https://transformer-training-explained.vercel.app/training/09-mixed-precision) (the Training site, in the Foundations track): why the optimiser keeps an FP32 master copy of the weights, because an update smaller than half the BF16 spacing at a weight is rounded away.
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n03-q1"
+  n={1}
+  input="number"
+  of="sum.fp16.uniform.naive"
+  fmt="int"
+  tol={0}
+  q="Add 8,192 numbers between 0 and 1, one at a time, in FP16. Where does the running sum stop?"
+  href="#n-sum"
+  more="The sum that stops"
+>
+  At <V of="sum.fp16.uniform.naive" fmt="int" />, about half the true
+  <V of="sum.fp16.uniform.exact" fmt="num" />: from there FP16's ulp is 2, so
+  every input is under half an ulp and rounds away.
+</Check>
+
+<Check
+  id="n03-q2"
+  n={2}
+  input="number"
+  of="sum.bf16.uniform.naive"
+  fmt="int"
+  tol={0}
+  q="And in BF16, with three fewer mantissa bits?"
+  href="#n-sum"
+  more="The sum that stops"
+>
+  <V of="sum.bf16.uniform.naive" fmt="int" />: eight times sooner. Accumulate in
+  FP32, or with Kahan or pairwise summation, and the sum is right.
+</Check>
+
+<Check
+  id="n03-q3"
+  n={3}
+  choices={[
+    "At 2,049: one more than the ulp",
+    "At 2,048: 2,048 + 1 is a tie, and ties go to the even neighbour",
+    "It never stops",
+  ]}
+  answer={1}
+  q="Sum all ones in FP16. Where does the naive sum stop, and why?"
+  href="#n-ones"
+  more="All ones"
+>
+  At <V of="sum.fp16.ones.naive" fmt="int" />: above it FP16's neighbours are 2
+  apart, so $2048 + 1$ lies exactly halfway, and round-to-nearest-even keeps
+  2,048.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Every addition rounds; in low precision a long sum can stop growing altogether.
+- Accumulate in a wider format: tensor cores add FP16 or BF16 products into FP32.
+- Kahan summation carries the lost low-order bits forward; pairwise summation keeps partial sums comparable.
+- The order of additions changes a floating-point answer.
+
+<Keep>
+  A running sum stalls once each input is below half its ulp: at 2,048 for
+  inputs below 1 in FP16.
+</Keep>
+
+</Remember>
