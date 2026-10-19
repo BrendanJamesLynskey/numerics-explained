@@ -7,13 +7,19 @@
 
 <Layer kind="concept">
 
+<span id="n-fields" />
+
 A floating-point number is three fields of bits. The **sign** says which side of zero. The **exponent** says which power of two the number lies between: $2^3$ and $2^4$, say. The **mantissa** says where between them, in $2^m$ equal steps. Click the bits in the animation: an exponent bit moves the value by a power of two, a mantissa bit nudges it within its power of two.
+
+<span id="n-binade" />
 
 The stretch from one power of two to the next is called a **binade**. Every binade holds the same $2^m$ values, but each binade is twice as wide as the one below it, so the gap between neighbours doubles every time the exponent goes up. That is why the format is called _floating_ point: the **relative** precision is roughly constant (about $m+1$ significant bits wherever you are) while the **absolute** spacing grows with the number. Press play and the number line zooms towards zero, a power of two per step: the same number of values keeps fitting into half the width, so they crowd together.
 
 FP8 E4M3 (4 exponent bits, 3 mantissa bits) has <V of="e4m3.max_code" fmt="int" /> positive values, from <V of="e4m3.min_sub" fmt="pow2" /> up to <V of="e4m3.max" fmt="exact" />. Near 1 its neighbours are <V of="e4m3.eps" fmt="exact" /> apart; near 400 they are 32 apart.
 
 **Subnormals.** When the exponent field is all zeros, the exponent stops at its minimum and the implicit leading 1 becomes a 0. The values below the smallest normal number, <V of="e4m3.min_normal" fmt="pow2" /> for E4M3, are then evenly spaced down to zero instead of crowding further: this is IEEE 754's _gradual underflow_. The last zoom steps show it.
+
+<span id="n-nan" />
 
 **Infinity and NaN.** IEEE formats (FP32, FP16, BF16 and FP8 E5M2) keep the all-ones exponent for $\pm\infty$ and NaN, "not a number". FP8 E4M3 gives that binade back to ordinary numbers and keeps only S.1111.111 for NaN. The OCP FP8 specification does this "to increase emax to 8 and thus to increase the dynamic range by one binade", so the largest value is <V of="e4m3.max" fmt="exact" /> rather than 240. The MX specification's FP6 and FP4 reserve nothing: every one of their codes is a number.
 
@@ -70,3 +76,72 @@ The number line draws a tick for every value, and a solid bar where neighbouring
 - [IEEE Std 754-2019](https://doi.org/10.1109/IEEESTD.2019.8766229), the standard for binary floating point; [the OCP 8-bit floating point specification](https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1) (E4M3 and E5M2); Goldberg, [What every computer scientist should know about floating-point arithmetic](https://doi.org/10.1145/103162.103163) (1991).
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n01-q1"
+  n={1}
+  input="number"
+  of="e4m3.max"
+  fmt="exact"
+  tol={0}
+  q="What is the largest value FP8 E4M3 can hold?"
+  href="#n-nan"
+  more="Infinity and NaN"
+>
+  <V of="e4m3.max" fmt="exact" />, not 240: E4M3 gives the all-ones exponent
+  back to ordinary numbers and keeps only S.1111.111 for NaN, which buys one
+  more binade.
+</Check>
+
+<Check
+  id="n01-q2"
+  n={2}
+  choices={[
+    "They stay the same everywhere",
+    "They double with every binade",
+    "They halve with every binade",
+  ]}
+  answer={1}
+  q="Going up from one binade to the next, what happens to the gap between neighbouring values?"
+  href="#n-binade"
+  more="Binades"
+>
+  It doubles: every binade holds the same $2^m$ values but is twice as wide.
+  Relative precision stays about constant while absolute spacing grows: near 1
+  E4M3's neighbours are <V of="e4m3.eps" fmt="exact" /> apart, near 400 they are
+  32 apart.
+</Check>
+
+<Check
+  id="n01-q3"
+  n={3}
+  input="number"
+  of="bf16.digits"
+  fmt="int"
+  tol={0}
+  q="BF16 keeps FP32's 8-bit exponent. How many significant bits does it keep?"
+  href="#n-binade"
+  more="Binades"
+>
+  <V of="bf16.digits" fmt="int" />: 7 stored mantissa bits plus the implicit
+  leading 1. It has nearly FP32's range, while FP16 has
+  <V of="fp16.digits" fmt="int" /> significant bits but stops at
+  <V of="fp16.max" fmt="exact" />.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- A float is sign, exponent (which binade) and mantissa (where in it, in $2^m$ steps).
+- Relative precision is about constant; absolute spacing doubles every binade.
+- Subnormals fill the gap below the smallest normal evenly (gradual underflow).
+- Exponent bits buy range, mantissa bits precision: BF16 is FP32's range, FP16 more precision.
+
+<Keep>
+  $v = (-1)^s \times 2^{E - \text{bias}} \times (1 + M/2^m)$.
+</Keep>
+
+</Remember>

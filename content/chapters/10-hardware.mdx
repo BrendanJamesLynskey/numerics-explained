@@ -9,9 +9,15 @@
 
 Everything so far has been about accuracy. The reason to accept any of it is hardware: narrow numbers are cheaper to **store**, to **move** and to **multiply**.
 
+<span id="n-moving" />
+
 **Moving.** For a memory-bound kernel, such as decoding one token at a time, time is bytes over bandwidth, so 4-bit weights are up to four times faster than 16-bit ones. The kernel reads packed weights and **dequantises them in registers**, just before the multiply, and never writes the wide copy anywhere; GPU Kernels Explained [animates exactly that](https://gpu-kernels-explained.vercel.app/learn/11-quantised-kernels), and shows when the gain disappears (a large batch makes the layer compute-bound).
 
+<span id="n-multiplying" />
+
 **Multiplying.** A multiplier's cost grows roughly with the square of its width. In Horowitz's 45 nm figures (below), an 8-bit integer multiply-add costs <V of="dot.pj_int8" /> pJ against <V of="dot.pj_fp32" /> pJ for FP32, <V of="dot.ratio_fp32_int8" /> times less, and reading a 32-bit word from DRAM costs <V of="hz.dram32.pj" fmt="int" /> pJ, more than a hundred FP32 multiply-adds. Narrow formats pay twice: in the arithmetic, and far more in the data movement.
+
+<span id="n-mx-dot" />
 
 **Block scales in the datapath.** The MX formats of [chapter 4](/learn/04-formats-zoo) were designed for this. The spec defines the dot product of two MX vectors as the product of their two block scales times the sum of the element products. The scales are powers of two, so applying them is an exponent add, and the reduction "only computes on the elements": narrow multipliers, an accumulator, and one scale step per block. Recent accelerators implement MXFP8, MXFP6 and MXFP4 (or close variants with finer scales) in their matrix units.
 
@@ -62,3 +68,69 @@ Two blocks of 32 approximately normal values (generated). FP16 here multiplies a
 - OCP [Microscaling Formats (MX) Specification v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf), section 6 (dot products).
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n10-q1"
+  n={1}
+  input="number"
+  of="dot.ratio_fp32_int8"
+  tol={0.1}
+  q="In Horowitz's 45 nm figures, how many times more energy does an FP32 multiply-add cost than an 8-bit integer one?"
+  href="#n-multiplying"
+  more="Multiplying"
+>
+  <V of="dot.ratio_fp32_int8" fmt="num" /> times:{" "}
+  <V of="dot.pj_fp32" fmt="num" /> pJ against <V of="dot.pj_int8" fmt="num" />{" "}
+  pJ. A multiplier grows roughly with the square of its width.
+</Check>
+
+<Check
+  id="n10-q2"
+  n={2}
+  input="number"
+  of="hz.dram32.pj"
+  fmt="int"
+  q="And reading one 32-bit word from DRAM, in pJ?"
+  href="#n-multiplying"
+  more="Multiplying"
+>
+  <V of="hz.dram32.pj" fmt="int" /> pJ, more than a hundred FP32 multiply-adds:
+  narrow formats pay off far more in data movement than in arithmetic.
+</Check>
+
+<Check
+  id="n10-q3"
+  n={3}
+  choices={[
+    "As a full multiplication per element",
+    "As an exponent add, once per block: the scales are powers of two",
+    "They are ignored",
+  ]}
+  answer={1}
+  q="How does an MX dot product apply its two block scales?"
+  href="#n-mx-dot"
+  more="Block scales in the datapath"
+>
+  The product of the two scales multiplies the sum of the element products, and
+  a power of two is an exponent add: narrow multipliers, an accumulator and one
+  scale step per block.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Narrow numbers are cheaper to store, to move and to multiply.
+- Memory-bound kernels speed up with fewer bytes; kernels dequantise in registers.
+- Moving a word from DRAM costs far more than any multiply-add.
+- MX formats were designed for the datapath: power-of-two block scales, one step per block.
+
+<Keep>
+  Energy: a DRAM read <V of="hz.dram32.pj" fmt="int" /> pJ, an FP32 multiply-add{" "}
+  <V of="dot.pj_fp32" fmt="num" /> pJ, an INT8 one
+  <V of="dot.pj_int8" fmt="num" /> pJ (45 nm).
+</Keep>
+
+</Remember>

@@ -7,7 +7,11 @@
 
 <Layer kind="concept">
 
+<span id="n-rtn" />
+
 Rounding each weight to its nearest grid point (round-to-nearest, RTN) minimises the error **in the weights**. What matters is the error **in the layer's output**, $\| W X - \hat W X \|^2$ over real inputs $X$, and there the errors of different weights can cancel. **GPTQ** (Frantar et al.) quantises a layer one input column at a time and, after each column, **adjusts the columns not yet quantised** to compensate for the error just made, using second-order information about the inputs: the Hessian $\mathbf{H} = 2 X X^\top$ of the output error.
+
+<span id="n-gptq-run" />
 
 Watch the animation: a column turns into its quantised values, and the weights to its right shift a little (the middle panel), each by an amount set by how strongly its input is correlated with the one just rounded. The bottom panel tracks the layer's output error with the columns done so far quantised. Plain rounding of the same columns climbs steadily; GPTQ climbs more slowly, because each step's compensation undoes part of the damage. On this layer (8 outputs, 16 inputs, 64 calibration inputs) GPTQ ends at <V of="gptq.b4.gptq" /> against <V of="gptq.b4.rtn" /> for INT4 round-to-nearest, <V of="gptq.b4.ratio" /> times smaller; at INT3, <V of="gptq.b3.gptq" /> against <V of="gptq.b3.rtn" />.
 
@@ -61,3 +65,70 @@ The layer and its calibration inputs are generated, with input channels of diffe
 - Frantar et al., [GPTQ: accurate post-training quantization for generative pre-trained transformers](https://arxiv.org/abs/2210.17323) (2022); Frantar, Singh and Alistarh, [Optimal Brain Compression](https://arxiv.org/abs/2208.11580) (2022), which introduced OBQ.
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n07-q1"
+  n={1}
+  input="number"
+  of="gptq.b4.ratio"
+  tol={0.1}
+  q="On this layer at INT4, how many times smaller is GPTQ's output error than round-to-nearest's?"
+  href="#n-gptq-run"
+  more="GPTQ, column by column"
+>
+  <V of="gptq.b4.ratio" fmt="num" /> times: each column's rounding error is
+  partly undone by adjusting the columns not yet quantised.
+</Check>
+
+<Check
+  id="n07-q2"
+  n={2}
+  choices={[
+    "The error in the weights",
+    "The error in the layer's output over real inputs",
+    "The number of bits",
+  ]}
+  answer={1}
+  q="What does GPTQ minimise that round-to-nearest does not?"
+  href="#n-rtn"
+  more="Weights against outputs"
+>
+  The output error $\|WX - \hat W X\|^2$. Round-to-nearest minimises each
+  weight's own error; in the output, errors of correlated inputs can cancel.
+</Check>
+
+<Check
+  id="n07-q3"
+  n={3}
+  choices={[
+    "Each by the same amount",
+    "Each by an amount set by how strongly its input correlates with the column just rounded",
+    "They do not move",
+  ]}
+  answer={1}
+  q="After a column is quantised, how do the weights to its right change?"
+  href="#n-gptq-run"
+  more="GPTQ, column by column"
+>
+  The Hessian $\mathbf{H} = 2XX^\top$ of the output error says how the inputs
+  correlate; the update spreads each column's error over the correlated columns
+  not yet done.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Round-to-nearest minimises weight error; what matters is output error over real inputs.
+- GPTQ quantises one column at a time and compensates in the columns not yet quantised.
+- The compensation uses the Hessian $2XX^\top$, through a Cholesky factor of its inverse.
+- It is cheap enough for 175B-parameter models in a few GPU hours.
+
+<Keep>
+  $e_j = (w_j - q_j)/[\mathbf{H}^{-1}]^{\mathrm{chol}}_{jj}$, then
+  $w_{j+1:} \mathrel{-}= e_j [\mathbf{H}^{-1}]^{\mathrm{chol}}_{j, j+1:}$.
+</Keep>
+
+</Remember>

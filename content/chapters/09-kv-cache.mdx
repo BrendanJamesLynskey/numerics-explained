@@ -7,6 +7,8 @@
 
 <Layer kind="concept">
 
+<span id="n-kv" />
+
 During generation a transformer keeps every past token's keys and values, the **KV cache**, and reads all of it for every new token. For long contexts and large batches it outgrows the weights, and decode time is mostly spent reading it (the [Inference site's KV-cache chapter](https://llm-inference-explained.vercel.app/learn/02-kv-cache) measures how much). Storing it in fewer bits shrinks both the memory and the time.
 
 The animation quantises the tiny model's keys and values as they are computed, in every layer, and compares its predictions with the unquantised model's. It runs the trained model of [chapter 8](/learn/08-awq-and-nf4) by default; over the 128 predictions of its 16 eight-character prompts:
@@ -22,7 +24,11 @@ The animation quantises the tiny model's keys and values as they are computed, i
 | INT2 per token                   | <V of="tiny.kv.int2_tok.bits" />  | <V of="tiny.kv.int2_tok.mem" fmt="pct" />  | <V of="tiny.trained.kv.int2_tok.drift" />  | <V of="tiny.trained.kv.int2_tok.agree" fmt="int" />    |
 | INT2, K per channel, V per token | <V of="tiny.kv.int2_kivi.bits" /> | <V of="tiny.kv.int2_kivi.mem" fmt="pct" /> | <V of="tiny.trained.kv.int2_kivi.drift" /> | <V of="tiny.trained.kv.int2_kivi.agree" fmt="int" />   |
 
+<span id="n-bits" />
+
 Eight bits are close to free; four bits cost a few per cent of drift and almost no flipped predictions; two bits break it. The scatter at the bottom of the animation is the trade-off at a glance: memory along the bottom, damage up the side.
+
+<span id="n-kivi" />
 
 **Per token or per channel?** A per-token scale covers one token's channels (here, one head's 8); a per-channel scale covers one channel across the tokens. KIVI found that in real LLMs the **keys** have a few fixed channels with very large magnitudes, so keys should be quantised per channel, and the values per token. KVQuant reached the same conclusion for keys and quantises them before the rotary embedding mixes their channels. This toy shows no such outlier channels, trained or not, and the two layouts give about the same drift: the rule comes from large trained models' statistics, not from the arithmetic. Switch the widget to random init and the same holds.
 
@@ -76,3 +82,71 @@ The tiny model is the trained one of [chapter 8](/learn/08-awq-and-nf4) by defau
 - Liu et al., [KIVI: a tuning-free asymmetric 2bit quantization for KV cache](https://arxiv.org/abs/2402.02750) (2024); Hooper et al., [KVQuant: towards 10 million context length LLM inference with KV cache quantization](https://arxiv.org/abs/2401.18079) (2024); DeepSeek-AI, [DeepSeek-V4.1-Flash: pushing the limits of KV cache compression](https://arxiv.org/abs/2609.19969) (2026).
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n09-q1"
+  n={1}
+  input="slider"
+  min={0}
+  max={100}
+  step={0.5}
+  of="tiny.kv.int4_tok.mem"
+  fmt="pct"
+  abs={3}
+  q="An INT4 per-token KV cache with its scales: what share of FP16's memory does it take?"
+  href="#n-bits"
+  more="How many bits"
+>
+  <V of="tiny.kv.int4_tok.mem" fmt="pct" />:{" "}
+  <V of="tiny.kv.int4_tok.bits" fmt="num" /> bits per number with the scales,
+  not 4, because this toy's scales cover only 8 channels each.
+</Check>
+
+<Check
+  id="n09-q2"
+  n={2}
+  input="number"
+  of="tiny.trained.kv.int2_tok.agree"
+  fmt="int"
+  tol={0.05}
+  q="INT2 per token: how many of the 128 top predictions stay unchanged?"
+  href="#n-bits"
+  more="How many bits"
+>
+  <V of="tiny.trained.kv.int2_tok.agree" fmt="int" />, against
+  <V of="tiny.trained.kv.int8_tok.agree" fmt="int" /> at INT8: eight bits are
+  close to free, two bits break it.
+</Check>
+
+<Check
+  id="n09-q3"
+  n={3}
+  choices={[
+    "Keys per token, values per channel",
+    "Keys per channel, values per token",
+    "Both per tensor",
+  ]}
+  answer={1}
+  q="KIVI's rule for real LLMs: how should keys and values be quantised?"
+  href="#n-kivi"
+  more="Per token or per channel?"
+>
+  Keys per channel, because a few fixed key channels have very large magnitudes;
+  values per token. The toy shows no such channels: the rule comes from large
+  trained models' statistics.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Decode reads the whole KV cache for every new token; fewer bits shrink both memory and time.
+- Eight bits are close to free, four cost a little, two break it.
+- Keys per channel, values per token (KIVI): a rule from real models' outlier key channels.
+- Fine-grained scales (FP4 with an FP8 scale per 16) cost bits but keep accuracy.
+
+<Keep>KV bits per number = element bits + scale bits ÷ values per scale.</Keep>
+
+</Remember>

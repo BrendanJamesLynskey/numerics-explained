@@ -13,6 +13,8 @@ With a fixed number of bits, every format makes the same trade: exponent bits bu
 - In the hatched part (the subnormals) precision drains away one bit per binade, and below it the value is **flushed to zero**.
 - Above the bar the value **overflows**: to infinity for IEEE formats, to NaN for E4M3 (non-saturating), and FP4, which has neither, **saturates** at its largest value.
 
+<span id="n-fp8" />
+
 **FP8 E4M3 against E5M2.** One more exponent bit doubles the number of binades (<V of="e5m2.binades" fmt="int" /> against <V of="e4m3.binades" fmt="int" />) and costs one mantissa bit. The FP8 formats paper's recipe uses E4M3 for weights and activations, where precision matters and the range is known, and E5M2 for gradients, whose range is wide and unpredictable.
 
 **BF16 against FP16.** BF16 is FP32 with the mantissa cut to 7 bits: with FP32's exponent it covers almost all of FP32's range, so a model trained in FP32 can switch to it without overflow or underflow, at <V of="bf16.digits" fmt="int" /> significant bits. FP16 has <V of="fp16.digits" fmt="int" /> significant bits but only <V of="fp16.binades" fmt="int" /> binades, so FP16 training scales the loss to keep small gradients from flushing to zero.
@@ -28,9 +30,13 @@ With a fixed number of bits, every format makes the same trade: exponent bits bu
 
 <Layer kind="concept">
 
+<span id="n-mx" />
+
 Four bits cannot cover the range of a whole tensor, but they can cover a **block** of neighbouring values if the block carries its own scale. That is the idea of the **microscaling (MX)** formats of the OCP MX specification: 32 elements of 8, 6 or 4 bits share one 8-bit scale, a pure power of two (E8M0), so an MXFP4 block costs <V of="mx.mxfp4.normal.bits_per_value" fmt="num" /> bits per value.
 
 The animation runs the specification's conversion (section 6.3). Find the largest magnitude in the block; take the largest power of two not above it, and divide by the largest power of two the element type can hold (4 for FP4). That is the scale $X$. Every element is stored as $V_i / X$, rounded to the element type, and clamped if it lands beyond the type's largest value.
+
+<span id="n-outlier" />
 
 With an ordinary block, MXFP4 keeps all but <V of="mx.mxfp4.normal.zeros" fmt="int" /> of the 32 values away from zero. Now pick the block **with an outlier**: one value of 24 drags the scale up to <V of="mx.mxfp4.outlier.scale" fmt="num" />, every other element becomes a small fraction of the grid, and <V of="mx.mxfp4.outlier.zeros" fmt="int" /> of them fall into FP4's gap around zero. Outliers are the central problem of low-bit formats, and small blocks are one answer: an outlier can only spoil its own 32 neighbours. MXFP8 keeps all 32 (E4M3 has far more values near zero). Pick **tiny values** and compare the last readout: stored directly as FP4, all <V of="mx.mxfp4.tiny.plain_zeros" fmt="int" /> would flush to zero; with the shared scale, the block keeps its shape.
 
@@ -84,3 +90,69 @@ The probe values and the MX blocks are illustrative: the blocks are 32 FP16 valu
 - New to training? [Training, chapter 9: mixed precision](https://transformer-training-explained.vercel.app/training/09-mixed-precision) (the Training site, in the Foundations track): BF16, FP16 with loss scaling and FP8 inside a training loop, with FP32 master weights, measured on a model that trains in your browser.
 
 </Callout>
+
+<CheckYourself>
+
+<Check
+  id="n04-q1"
+  n={1}
+  input="number"
+  of="e5m2.binades"
+  fmt="int"
+  tol={0}
+  q="FP8 E5M2 has one more exponent bit than E4M3. How many binades does it cover?"
+  href="#n-fp8"
+  more="E4M3 against E5M2"
+>
+  <V of="e5m2.binades" fmt="int" />, against
+  <V of="e4m3.binades" fmt="int" /> for E4M3: one exponent bit doubles the
+  range, and costs a mantissa bit.
+</Check>
+
+<Check
+  id="n04-q2"
+  n={2}
+  choices={[
+    "E5M2 for weights and activations, E4M3 for gradients",
+    "E4M3 for weights and activations, E5M2 for gradients",
+    "E4M3 everywhere",
+  ]}
+  answer={1}
+  q="The FP8 formats paper's recipe: which format goes where?"
+  href="#n-fp8"
+  more="E4M3 against E5M2"
+>
+  E4M3, with more precision, for weights and activations, whose range is known;
+  E5M2, with more range, for gradients, whose range is wide and unpredictable.
+</Check>
+
+<Check
+  id="n04-q3"
+  n={3}
+  input="number"
+  of="mx.mxfp4.outlier.zeros"
+  fmt="int"
+  tol={0}
+  q="An MXFP4 block of 32 with one outlier of 24: how many of its values fall to zero?"
+  href="#n-outlier"
+  more="An outlier in a block"
+>
+  <V of="mx.mxfp4.outlier.zeros" fmt="int" />: the outlier drags the shared
+  scale up to <V of="mx.mxfp4.outlier.scale" fmt="num" />, and the rest land in
+  FP4's gap around zero. Small blocks confine the damage to 32 neighbours.
+</Check>
+
+</CheckYourself>
+
+<Remember>
+
+- Exponent bits buy range, mantissa bits precision; the trade is the same for every format.
+- Below the normal range precision drains away bit by bit, then values flush to zero.
+- E4M3 for weights and activations, E5M2 for gradients; BF16 trains without loss scaling, FP16 needs it.
+- MX formats share one power-of-two scale per 32 elements: <V of="mx.mxfp4.normal.bits_per_value" fmt="num" /> bits per value for MXFP4.
+
+<Keep>
+  Relative rounding error in the normal range: at most $2^{-(m + 1)}$.
+</Keep>
+
+</Remember>
